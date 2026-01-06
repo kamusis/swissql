@@ -1,6 +1,7 @@
 package com.swissql.controller;
 
 import com.swissql.api.*;
+import com.swissql.service.AiContextService;
 import com.swissql.service.AiSqlGenerateService;
 import com.swissql.service.DatabaseService;
 import com.swissql.service.SessionManager;
@@ -22,11 +23,18 @@ public class SwissQLController {
     private final SessionManager sessionManager;
     private final DatabaseService databaseService;
     private final AiSqlGenerateService aiSqlGenerateService;
+    private final AiContextService aiContextService;
 
-    public SwissQLController(SessionManager sessionManager, DatabaseService databaseService, AiSqlGenerateService aiSqlGenerateService) {
+    public SwissQLController(
+            SessionManager sessionManager,
+            DatabaseService databaseService,
+            AiSqlGenerateService aiSqlGenerateService,
+            AiContextService aiContextService
+    ) {
         this.sessionManager = sessionManager;
         this.databaseService = databaseService;
         this.aiSqlGenerateService = aiSqlGenerateService;
+        this.aiContextService = aiContextService;
     }
 
     /**
@@ -79,6 +87,7 @@ public class SwissQLController {
     public ResponseEntity<Void> disconnect(@RequestParam("session_id") String sessionId) {
         sessionManager.terminateSession(sessionId);
         databaseService.closeSession(sessionId);
+        aiContextService.clear(sessionId);
         return ResponseEntity.ok().build();
     }
 
@@ -103,8 +112,10 @@ public class SwissQLController {
 
         try {
             ExecuteResponse response = databaseService.execute(sessionInfoOpt.get(), request);
+            aiContextService.recordExecute(request.getSessionId(), request.getSql(), response);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
+            aiContextService.recordExecuteError(request.getSessionId(), request.getSql(), e);
             return ResponseEntity.status(500).body(ErrorResponse.builder()
                     .code("EXECUTION_ERROR")
                     .message(e.getMessage())
@@ -151,6 +162,55 @@ public class SwissQLController {
                 .sql(result.getSql())
                 .warnings(List.of())
                 .build());
+    }
+
+    /**
+     * Validate whether a session is still present and not expired.
+     *
+     * GET /v1/sessions/validate
+     *
+     * @param sessionId Session ID to validate
+     * @return 200 if valid, 401 if missing/expired
+     */
+    @GetMapping("/sessions/validate")
+    public ResponseEntity<?> validateSession(@RequestParam("session_id") String sessionId) {
+        var sessionInfoOpt = sessionManager.getSession(sessionId);
+        if (sessionInfoOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(ErrorResponse.builder()
+                    .code("SESSION_EXPIRED")
+                    .message("Session missing or expired")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+        return ResponseEntity.ok(Map.of("valid", "true"));
+    }
+
+    /**
+     * Retrieve recent executed SQL context that may be included in AI prompts.
+     *
+     * GET /v1/ai/context
+     */
+    @GetMapping("/ai/context")
+    public ResponseEntity<AiContextResponse> getAiContext(
+            @RequestParam("session_id") String sessionId,
+            @RequestParam(value = "limit", required = false) Integer limit
+    ) {
+        int resolvedLimit = limit != null ? limit : 10;
+        return ResponseEntity.ok(AiContextResponse.builder()
+                .sessionId(sessionId)
+                .items(aiContextService.getRecent(sessionId, resolvedLimit))
+                .build());
+    }
+
+    /**
+     * Clear stored AI context for a session.
+     *
+     * POST /v1/ai/context/clear
+     */
+    @PostMapping("/ai/context/clear")
+    public ResponseEntity<Void> clearAiContext(@Valid @RequestBody AiContextClearRequest request) {
+        aiContextService.clear(request.getSessionId());
+        return ResponseEntity.ok().build();
     }
 
     /**

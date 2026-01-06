@@ -8,6 +8,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -115,9 +118,54 @@ type ErrorResponse struct {
 	TraceId string `json:"trace_id"`
 }
 
+type ApiErrorKind string
+
+const (
+	ApiErrorKindAPI ApiErrorKind = "api"
+	ApiErrorKindDB  ApiErrorKind = "db"
+)
+
+type ApiError struct {
+	Kind    ApiErrorKind
+	Status  int
+	Code    string
+	Message string
+	TraceId string
+}
+
+func (e *ApiError) Error() string {
+	if e == nil {
+		return ""
+	}
+
+	prefix := "API error"
+	if e.Kind == ApiErrorKindDB {
+		prefix = "DB error"
+	}
+
+	if e.Code != "" && e.TraceId != "" {
+		return fmt.Sprintf("%s: [%s] %s (trace_id: %s)", prefix, e.Code, e.Message, e.TraceId)
+	}
+	if e.Code != "" {
+		return fmt.Sprintf("%s: [%s] %s", prefix, e.Code, e.Message)
+	}
+	return fmt.Sprintf("%s: %s", prefix, e.Message)
+}
+
+var leadingErrorPrefixRegex = regexp.MustCompile(`(?i)^(error:\s*)+`)
+
+func sanitizeDbErrorMessage(msg string) string {
+	s := strings.TrimSpace(msg)
+	s = leadingErrorPrefixRegex.ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
+}
+
 type AiGenerateRequest struct {
 	Prompt        string `json:"prompt"`
 	DbType        string `json:"db_type"`
+	SessionId     string `json:"session_id,omitempty"`
+	ContextMode   string `json:"context_mode,omitempty"`
+	ContextLimit  int    `json:"context_limit,omitempty"`
 	SchemaContext string `json:"schema_context,omitempty"`
 }
 
@@ -127,6 +175,45 @@ type AiGenerateResponse struct {
 	Explanation string   `json:"explanation"`
 	Warnings    []string `json:"warnings"`
 	TraceId     string   `json:"trace_id"`
+}
+
+type AiContextClearRequest struct {
+	SessionId string `json:"session_id"`
+}
+
+type AiContextColumn struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+type AiContextItem struct {
+	Sql          string                   `json:"sql"`
+	ExecutedAt   string                   `json:"executed_at"`
+	Type         string                   `json:"type"`
+	Error        string                   `json:"error,omitempty"`
+	Columns      []AiContextColumn        `json:"columns,omitempty"`
+	SampleRows   []map[string]interface{} `json:"sample_rows,omitempty"`
+	Truncated    bool                     `json:"truncated"`
+	RowsAffected int                      `json:"rows_affected"`
+	DurationMs   int                      `json:"duration_ms"`
+}
+
+type AiContextResponse struct {
+	SessionId string          `json:"session_id"`
+	Items     []AiContextItem `json:"items"`
+}
+
+func (c *Client) ValidateSession(sessionId string) error {
+	q := url.Values{}
+	q.Set("session_id", sessionId)
+	urlStr := fmt.Sprintf("%s/v1/sessions/validate?%s", c.BaseURL, q.Encode())
+
+	body, err := c.get(urlStr)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	return nil
 }
 
 func (c *Client) Connect(req *ConnectRequest) (*ConnectResponse, error) {
@@ -142,6 +229,37 @@ func (c *Client) Connect(req *ConnectRequest) (*ConnectResponse, error) {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+func (c *Client) AiContext(sessionId string, limit int) (*AiContextResponse, error) {
+	q := url.Values{}
+	q.Set("session_id", sessionId)
+	if limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	urlStr := fmt.Sprintf("%s/v1/ai/context?%s", c.BaseURL, q.Encode())
+
+	body, err := c.get(urlStr)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp AiContextResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) AiContextClear(sessionId string) error {
+	urlStr := fmt.Sprintf("%s/v1/ai/context/clear", c.BaseURL)
+	respBody, err := c.post(urlStr, &AiContextClearRequest{SessionId: sessionId})
+	if err != nil {
+		return err
+	}
+	defer respBody.Close()
+	return nil
 }
 
 func (c *Client) AiGenerate(req *AiGenerateRequest) (*AiGenerateResponse, error) {
@@ -211,7 +329,60 @@ func (c *Client) post(url string, body interface{}) (io.ReadCloser, error) {
 		var errResp ErrorResponse
 		json.NewDecoder(resp.Body).Decode(&errResp)
 		resp.Body.Close()
-		return nil, fmt.Errorf("API error: [%s] %s (trace_id: %s)", errResp.Code, errResp.Message, errResp.TraceId)
+
+		kind := ApiErrorKindAPI
+		msg := errResp.Message
+		if errResp.Code == "EXECUTION_ERROR" {
+			kind = ApiErrorKindDB
+			msg = sanitizeDbErrorMessage(msg)
+		}
+
+		return nil, &ApiError{
+			Kind:    kind,
+			Status:  resp.StatusCode,
+			Code:    errResp.Code,
+			Message: msg,
+			TraceId: errResp.TraceId,
+		}
+	}
+
+	return resp.Body, nil
+}
+
+func (c *Client) get(urlStr string) (io.ReadCloser, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), c.Timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		var errResp ErrorResponse
+		json.NewDecoder(resp.Body).Decode(&errResp)
+		resp.Body.Close()
+		if errResp.Code != "" {
+			kind := ApiErrorKindAPI
+			msg := errResp.Message
+			if errResp.Code == "EXECUTION_ERROR" {
+				kind = ApiErrorKindDB
+				msg = sanitizeDbErrorMessage(msg)
+			}
+			return nil, &ApiError{
+				Kind:    kind,
+				Status:  resp.StatusCode,
+				Code:    errResp.Code,
+				Message: msg,
+				TraceId: errResp.TraceId,
+			}
+		}
+		return nil, &ApiError{Kind: ApiErrorKindAPI, Status: resp.StatusCode, Message: fmt.Sprintf("status=%d", resp.StatusCode)}
 	}
 
 	return resp.Body, nil

@@ -30,6 +30,23 @@ public class AiGenerateRequest {
     private String dbType;
 
     /**
+     * Optional backend session id.
+     * If provided, backend can attach recent executed SQL context to the LLM prompt.
+     */
+    private String sessionId;
+
+    /**
+     * Context mode for LLM prompt enrichment.
+     * Values: off | sql_only | schema_and_samples
+     */
+    private String contextMode;
+
+    /**
+     * Maximum number of recent context items to include.
+     */
+    private Integer contextLimit;
+
+    /**
      * Optional database schema context to improve SQL accuracy.
      * Can contain table definitions, column names, relationships.
      */

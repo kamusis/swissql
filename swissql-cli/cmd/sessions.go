@@ -59,6 +59,14 @@ var lsCmd = &cobra.Command{
 					if cfg != nil && cfg.CurrentName == name {
 						cfg.CurrentName = ""
 					}
+					continue
+				}
+				if err := c.ValidateSession(e.SessionId); err != nil {
+					reg.RemoveSession(name)
+					pruned = append(pruned, name)
+					if cfg != nil && cfg.CurrentName == name {
+						cfg.CurrentName = ""
+					}
 				}
 			}
 			if len(pruned) > 0 {

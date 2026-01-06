@@ -128,6 +128,48 @@ var replCmd = &cobra.Command{
 				continue
 			}
 
+			if lower == "/context show" {
+				line.AppendHistory(input)
+				ctxResp, err := c.AiContext(entry.SessionId, 10)
+				if err != nil {
+					fmt.Printf("%v\n", err)
+					continue
+				}
+				if ctxResp == nil || len(ctxResp.Items) == 0 {
+					fmt.Println("No AI context recorded for this session.")
+					continue
+				}
+				for i, item := range ctxResp.Items {
+					fmt.Printf("[%d] SQL: %s\n", i+1, item.Sql)
+					if strings.TrimSpace(item.Error) != "" {
+						fmt.Printf("    ERROR: %s\n", item.Error)
+					}
+					if len(item.Columns) > 0 {
+						fmt.Println("    Columns:")
+						for _, col := range item.Columns {
+							fmt.Printf("      - %s %s\n", col.Name, col.Type)
+						}
+					}
+					if len(item.SampleRows) > 0 {
+						fmt.Println("    Sample rows:")
+						for _, row := range item.SampleRows {
+							fmt.Printf("      - %v\n", row)
+						}
+					}
+				}
+				continue
+			}
+
+			if lower == "/context clear" {
+				line.AppendHistory(input)
+				if err := c.AiContextClear(entry.SessionId); err != nil {
+					fmt.Printf("%v\n", err)
+					continue
+				}
+				fmt.Println("AI context cleared.")
+				continue
+			}
+
 			if strings.HasPrefix(input, "/ai ") {
 				multiLineSql = nil
 				promptText := strings.TrimSpace(strings.TrimPrefix(input, "/ai "))
@@ -139,11 +181,14 @@ var replCmd = &cobra.Command{
 				line.AppendHistory(input)
 
 				aResp, err := c.AiGenerate(&client.AiGenerateRequest{
-					Prompt: promptText,
-					DbType: entry.DbType,
+					Prompt:       promptText,
+					DbType:       entry.DbType,
+					SessionId:    entry.SessionId,
+					ContextMode:  "schema_and_samples",
+					ContextLimit: 10,
 				})
 				if err != nil {
-					fmt.Printf("Error: %v\n", err)
+					fmt.Printf("%v\n", err)
 					continue
 				}
 
@@ -166,7 +211,7 @@ var replCmd = &cobra.Command{
 				if !yes {
 					confirm, err := line.Prompt("Execute? [Y/n] ")
 					if err != nil {
-						fmt.Printf("Error: %v\n", err)
+						fmt.Printf("%v\n", err)
 						continue
 					}
 					confirm = strings.TrimSpace(confirm)
@@ -193,7 +238,7 @@ var replCmd = &cobra.Command{
 
 				resp, err := c.Execute(req)
 				if err != nil {
-					fmt.Printf("Error: %v\n", err)
+					fmt.Printf("%v\n", err)
 					continue
 				}
 				renderResponse(cmd, resp)
@@ -221,7 +266,7 @@ var replCmd = &cobra.Command{
 
 				resp, err := c.Execute(req)
 				if err != nil {
-					fmt.Printf("Error: %v\n", err)
+					fmt.Printf("%v\n", err)
 					continue
 				}
 

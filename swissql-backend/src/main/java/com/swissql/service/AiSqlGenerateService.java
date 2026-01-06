@@ -37,6 +37,7 @@ public class AiSqlGenerateService {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private final Environment environment;
+    private final AiContextService aiContextService;
 
     /**
      * Create a new AI SQL generation service.
@@ -44,9 +45,10 @@ public class AiSqlGenerateService {
      * @param objectMapper Jackson object mapper
      * @param environment Spring environment for configuration
      */
-    public AiSqlGenerateService(ObjectMapper objectMapper, Environment environment) {
+    public AiSqlGenerateService(ObjectMapper objectMapper, Environment environment, AiContextService aiContextService) {
         this.objectMapper = objectMapper;
         this.environment = environment;
+        this.aiContextService = aiContextService;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -111,6 +113,8 @@ public class AiSqlGenerateService {
         try {
             String sqlDialect = normalizeDbType(request.getDbType());
 
+            String userPrompt = buildUserPrompt(request);
+
             Map<String, Object> payload = new HashMap<>();
             payload.put("model", config.model());
             payload.put("messages", List.of(
@@ -120,7 +124,7 @@ public class AiSqlGenerateService {
                     ),
                     Map.of(
                             "role", "user",
-                            "content", request.getPrompt()
+                            "content", userPrompt
                     )
             ));
 
@@ -193,6 +197,92 @@ public class AiSqlGenerateService {
         }
 
         return s;
+    }
+
+    private String buildUserPrompt(AiGenerateRequest request) {
+        if (request == null) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        if (request.getPrompt() != null) {
+            sb.append(request.getPrompt().trim());
+        }
+
+        if (request.getSchemaContext() != null && !request.getSchemaContext().isBlank()) {
+            sb.append("\n\nSchema context:\n");
+            sb.append(request.getSchemaContext().trim());
+        }
+
+        String contextMode = resolveContextMode(request.getContextMode());
+        if ("off".equals(contextMode)) {
+            return sb.toString();
+        }
+
+        String sessionId = request.getSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            return sb.toString();
+        }
+
+        int limit = request.getContextLimit() != null ? request.getContextLimit() : 10;
+        List<AiContextItem> items = aiContextService.getRecent(sessionId, limit);
+        if (items.isEmpty()) {
+            return sb.toString();
+        }
+
+        sb.append("\n\nRecent executed SQL context (most recent first):\n");
+        sb.append(formatContextItems(items, contextMode));
+        return sb.toString();
+    }
+
+    private String resolveContextMode(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "schema_and_samples";
+        }
+        String v = raw.trim().toLowerCase(Locale.ROOT);
+        if ("off".equals(v) || "sql_only".equals(v) || "schema_and_samples".equals(v)) {
+            return v;
+        }
+        return "schema_and_samples";
+    }
+
+    private String formatContextItems(List<AiContextItem> items, String contextMode) {
+        StringBuilder sb = new StringBuilder();
+        int idx = 1;
+        for (AiContextItem item : items) {
+            if (item == null) {
+                continue;
+            }
+
+            sb.append("[").append(idx).append("] SQL: ").append(item.getSql()).append("\n");
+
+            if (item.getError() != null && !item.getError().isBlank()) {
+                sb.append("    ERROR: ").append(item.getError()).append("\n");
+            }
+
+            if ("schema_and_samples".equals(contextMode)) {
+                if (item.getColumns() != null && !item.getColumns().isEmpty()) {
+                    sb.append("    Result columns:\n");
+                    for (AiContextItem.Column c : item.getColumns()) {
+                        if (c == null) {
+                            continue;
+                        }
+                        sb.append("      - ").append(c.getName()).append(" ").append(c.getType()).append("\n");
+                    }
+                }
+
+                if (item.getSampleRows() != null && !item.getSampleRows().isEmpty()) {
+                    sb.append("    Sample rows:");
+                    sb.append("\n");
+                    for (Map<String, Object> row : item.getSampleRows()) {
+                        sb.append("      - ").append(row).append("\n");
+                    }
+                }
+            }
+
+            idx++;
+        }
+        return sb.toString();
     }
 
     /**
