@@ -87,11 +87,7 @@ var connectCmd = &cobra.Command{
 
 		// Save to config (keep legacy fields for backward compatibility)
 		cfg, _ := config.LoadConfig()
-		cfg.ServerURL = server
 		cfg.CurrentName = name
-		cfg.SessionId = resp.SessionId
-		cfg.Dsn = dsn
-		cfg.DbType = dbType
 		if err := config.SaveConfig(cfg); err != nil {
 			return fmt.Errorf("failed to save config: %w", err)
 		}

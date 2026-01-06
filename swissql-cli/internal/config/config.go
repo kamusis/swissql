@@ -7,11 +7,12 @@ import (
 )
 
 type Config struct {
-	ServerURL   string `json:"server_url"`
 	CurrentName string `json:"current_name"`
-	SessionId   string `json:"session_id"`
-	Dsn         string `json:"dsn"`
-	DbType      string `json:"db_type"`
+	DisplayWide bool   `json:"display_wide"`
+	Display     struct {
+		MaxColWidth   int `json:"max_col_width"`
+		MaxQueryWidth int `json:"max_query_width"`
+	} `json:"display"`
 }
 
 func GetConfigDir() (string, error) {
@@ -51,7 +52,11 @@ func LoadConfig() (*Config, error) {
 	}
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return &Config{ServerURL: "http://localhost:8080"}, nil
+		cfg := &Config{}
+		cfg.DisplayWide = false
+		cfg.Display.MaxColWidth = 32
+		cfg.Display.MaxQueryWidth = 60
+		return cfg, nil
 	}
 
 	data, err := os.ReadFile(path)
@@ -62,6 +67,14 @@ func LoadConfig() (*Config, error) {
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, err
+	}
+
+	// Defaults for newly introduced fields
+	if cfg.Display.MaxColWidth == 0 {
+		cfg.Display.MaxColWidth = 32
+	}
+	if cfg.Display.MaxQueryWidth == 0 {
+		cfg.Display.MaxQueryWidth = 60
 	}
 	return &cfg, nil
 }

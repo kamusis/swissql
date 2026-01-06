@@ -36,6 +36,14 @@ var replCmd = &cobra.Command{
 		timeout, _ := cmd.Flags().GetInt("connection-timeout")
 		c := client.NewClient(server, time.Duration(timeout)*time.Millisecond)
 
+		// Load persisted CLI display settings
+		cfg, err := config.LoadConfig()
+		if err == nil && cfg != nil {
+			setDisplayWide(cfg.DisplayWide)
+			setDisplayWidth(cfg.Display.MaxColWidth)
+			setDisplayQueryWidth(cfg.Display.MaxQueryWidth)
+		}
+
 		line := liner.NewLiner()
 		defer line.Close()
 
@@ -77,6 +85,47 @@ var replCmd = &cobra.Command{
 			if strings.ToLower(input) == "exit" || strings.ToLower(input) == "quit" {
 				// Detach by default (do not disconnect)
 				break
+			}
+
+			lower := strings.ToLower(input)
+			if strings.HasPrefix(lower, "set display ") {
+				args := strings.Fields(lower)
+				if len(args) == 3 {
+					switch args[2] {
+					case "wide":
+						setDisplayWide(true)
+						if cfg != nil {
+							cfg.DisplayWide = true
+							_ = config.SaveConfig(cfg)
+						}
+						fmt.Println("Display mode set to wide.")
+						continue
+					case "narrow":
+						setDisplayWide(false)
+						if cfg != nil {
+							cfg.DisplayWide = false
+							_ = config.SaveConfig(cfg)
+						}
+						fmt.Println("Display mode set to narrow.")
+						continue
+					}
+				}
+				if len(args) == 4 && args[2] == "width" {
+					w, err := parseDisplayWidthArg(args[3])
+					if err != nil {
+						fmt.Println("Error: invalid width")
+						continue
+					}
+					setDisplayWidth(w)
+					if cfg != nil {
+						cfg.Display.MaxColWidth = displayMaxColWidth
+						_ = config.SaveConfig(cfg)
+					}
+					fmt.Printf("Display column width set to %d.\n", displayMaxColWidth)
+					continue
+				}
+				fmt.Println("Usage: set display wide|narrow|width <n>")
+				continue
 			}
 
 			if strings.HasPrefix(input, "/ai ") {

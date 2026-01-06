@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kamusis/swissql/swissql-cli/internal/client"
@@ -11,6 +13,50 @@ import (
 	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/cobra"
 )
+
+var displayWide bool
+var displayMaxColWidth = 32
+var displayMaxQueryWidth = 60
+
+func clampInt(v, min, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
+func truncateWithEllipsisCell(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= width {
+		return s
+	}
+	if width <= 3 {
+		return string(r[:width])
+	}
+	return string(r[:width-3]) + "..."
+}
+
+func setDisplayWide(v bool) {
+	displayWide = v
+}
+
+func setDisplayWidth(width int) {
+	displayMaxColWidth = clampInt(width, 8, 400)
+}
+
+func setDisplayQueryWidth(width int) {
+	displayMaxQueryWidth = clampInt(width, 8, 2000)
+}
+
+func parseDisplayWidthArg(s string) (int, error) {
+	return strconv.Atoi(s)
+}
 
 var queryCmd = &cobra.Command{
 	Use:   "query [SQL]",
@@ -68,7 +114,18 @@ func renderResponse(cmd *cobra.Command, resp *client.ExecuteResponse) {
 		for _, row := range resp.Data.Rows {
 			values := make([]any, len(resp.Data.Columns))
 			for i, col := range resp.Data.Columns {
-				values[i] = fmt.Sprintf("%v", row[col.Name])
+				cell := fmt.Sprintf("%v", row[col.Name])
+				cell = strings.ReplaceAll(cell, "\r\n", " ")
+				cell = strings.ReplaceAll(cell, "\n", " ")
+				cell = strings.ReplaceAll(cell, "\t", " ")
+				if !displayWide {
+					maxWidth := displayMaxColWidth
+					if col.Name == "query" || col.Name == "QUERY" {
+						maxWidth = displayMaxQueryWidth
+					}
+					cell = truncateWithEllipsisCell(cell, maxWidth)
+				}
+				values[i] = cell
 			}
 			table.Append(values...)
 		}
@@ -84,6 +141,12 @@ func renderResponse(cmd *cobra.Command, resp *client.ExecuteResponse) {
 }
 
 func init() {
+	cfg, err := config.LoadConfig()
+	if err == nil && cfg != nil {
+		displayWide = cfg.DisplayWide
+		displayMaxColWidth = cfg.Display.MaxColWidth
+		displayMaxQueryWidth = cfg.Display.MaxQueryWidth
+	}
 	rootCmd.AddCommand(queryCmd)
 	queryCmd.Flags().String("name", "", "Session name to use (tmux-like)")
 }

@@ -243,16 +243,7 @@ func ResolveActiveSession(name string) (SessionEntry, error) {
 		return entry, nil
 	}
 
-	if cfg.SessionId == "" {
-		return SessionEntry{}, errors.New("no active session. Please run 'swissql connect' first")
-	}
-	return SessionEntry{
-		Name:      "",
-		SessionId: cfg.SessionId,
-		ServerURL: cfg.ServerURL,
-		DbType:    cfg.DbType,
-		DsnMasked: MaskDsn(cfg.Dsn),
-	}, nil
+	return SessionEntry{}, errors.New("no active session. Please run 'swissql connect' first or specify a session name")
 }
 
 // MostRecentSessionName returns the name of the most recently used session.
