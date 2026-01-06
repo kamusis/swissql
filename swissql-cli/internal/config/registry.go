@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -119,15 +120,97 @@ func (reg *Registry) GetSession(name string) (SessionEntry, bool) {
 
 // MaskDsn removes password from DSN for safe display.
 func MaskDsn(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
+	if raw == "" {
 		return ""
 	}
-	if u.User != nil {
-		username := u.User.Username()
-		u.User = url.User(username)
+
+	// 1. Try standard parsing first
+	u, err := url.Parse(raw)
+	if err == nil && u.Host != "" && !strings.Contains(u.User.String(), "#") {
+		if u.User != nil {
+			username := u.User.Username()
+			u.User = url.User(username)
+		}
+		return u.String()
 	}
-	return u.String()
+
+	// 2. Manual fallback for DSNs with special characters (like '#') in passwords
+	// Example: postgres://user:p#ss@host:port/db
+
+	// Find the last '@' which separates userinfo from host
+	atIndex := strings.LastIndex(raw, "@")
+	if atIndex == -1 {
+		// No userinfo, or very malformed. Try to just return the string if no sensitive parts seen.
+		if !strings.Contains(raw, "://") {
+			return raw
+		}
+		return raw
+	}
+
+	prefix := raw[:atIndex]   // e.g. postgres://user:p#ss
+	suffix := raw[atIndex+1:] // e.g. host:port/db
+
+	// Mask the password in the prefix
+	protoIndex := strings.Index(prefix, "://")
+	if protoIndex != -1 {
+		protocol := prefix[:protoIndex+3]
+		userPart := prefix[protoIndex+3:]
+		colonIndex := strings.Index(userPart, ":")
+		if colonIndex != -1 {
+			username := userPart[:colonIndex]
+			return protocol + username + "@" + suffix
+		}
+		return protocol + userPart + "@" + suffix
+	}
+
+	return "masked://" + suffix
+}
+
+// GetRemoteHost returns the remote hostname or TNS alias from the DSN.
+func (e SessionEntry) GetRemoteHost() string {
+	if e.DsnMasked == "" {
+		return "none"
+	}
+
+	// Try parsing the masked DSN
+	u, err := url.Parse(e.DsnMasked)
+	if err == nil && u.Host != "" {
+		host := u.Hostname()
+		if host == "" {
+			host = u.Host
+		}
+		if host != "" {
+			return host
+		}
+	}
+
+	// Manual fallback for masked DSN if parsing fails
+	// Example: postgres://user@host:port/db or masked://host:port/db
+	atIndex := strings.LastIndex(e.DsnMasked, "@")
+	hostPart := e.DsnMasked
+	if atIndex != -1 {
+		hostPart = e.DsnMasked[atIndex+1:]
+	} else {
+		protoIndex := strings.Index(e.DsnMasked, "://")
+		if protoIndex != -1 {
+			hostPart = e.DsnMasked[protoIndex+3:]
+		}
+	}
+
+	// hostPart might be "host:port/path"
+	slashIndex := strings.Index(hostPart, "/")
+	if slashIndex != -1 {
+		hostPart = hostPart[:slashIndex]
+	}
+	colonIndex := strings.Index(hostPart, ":")
+	if colonIndex != -1 {
+		hostPart = hostPart[:colonIndex]
+	}
+
+	if hostPart == "" {
+		return "unknown"
+	}
+	return hostPart
 }
 
 // ResolveActiveSession resolves the session to use for a command.

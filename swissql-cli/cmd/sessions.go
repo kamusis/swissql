@@ -3,12 +3,27 @@ package cmd
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/kamusis/swissql/swissql-cli/internal/client"
 	"github.com/kamusis/swissql/swissql-cli/internal/config"
 	"github.com/spf13/cobra"
 )
+
+func truncateWithEllipsis(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= width {
+		return s + strings.Repeat(" ", width-len(r))
+	}
+	if width <= 3 {
+		return string(r[:width])
+	}
+	return string(r[:width-3]) + "..."
+}
 
 var lsCmd = &cobra.Command{
 	Use:   "ls",
@@ -37,7 +52,8 @@ var lsCmd = &cobra.Command{
 			if cfg.CurrentName != "" && cfg.CurrentName == name {
 				marker = "*"
 			}
-			fmt.Printf("%s %s\t%s\t%s\t%s\n", marker, e.Name, e.DbType, e.ServerURL, e.SessionId)
+			host := truncateWithEllipsis(e.GetRemoteHost(), 32)
+			fmt.Printf("%s %-20s %-10s %-32s %s\n", marker, e.Name, e.DbType, host, e.SessionId)
 		}
 		return nil
 	},
