@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 type Client struct {
 	BaseURL    string
 	HTTPClient *http.Client
+	Timeout    time.Duration
 }
 
 func NewClient(baseURL string, timeout time.Duration) *Client {
@@ -28,7 +30,30 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 		HTTPClient: &http.Client{
 			Transport: transport,
 		},
+		Timeout: timeout,
 	}
+}
+
+func (c *Client) Status() error {
+	ctx, cancel := context.WithTimeout(context.Background(), c.Timeout)
+	defer cancel()
+
+	url := fmt.Sprintf("%s/v1/status", c.BaseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("API error: status=%d", resp.StatusCode)
+	}
+	return nil
 }
 
 type ConnectRequest struct {
@@ -90,6 +115,20 @@ type ErrorResponse struct {
 	TraceId string `json:"trace_id"`
 }
 
+type AiGenerateRequest struct {
+	Prompt        string `json:"prompt"`
+	DbType        string `json:"db_type"`
+	SchemaContext string `json:"schema_context,omitempty"`
+}
+
+type AiGenerateResponse struct {
+	Sql         string   `json:"sql"`
+	Risk        string   `json:"risk"`
+	Explanation string   `json:"explanation"`
+	Warnings    []string `json:"warnings"`
+	TraceId     string   `json:"trace_id"`
+}
+
 func (c *Client) Connect(req *ConnectRequest) (*ConnectResponse, error) {
 	url := fmt.Sprintf("%s/v1/connect", c.BaseURL)
 	respBody, err := c.post(url, req)
@@ -99,6 +138,21 @@ func (c *Client) Connect(req *ConnectRequest) (*ConnectResponse, error) {
 	defer respBody.Close()
 
 	var resp ConnectResponse
+	if err := json.NewDecoder(respBody).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) AiGenerate(req *AiGenerateRequest) (*AiGenerateResponse, error) {
+	url := fmt.Sprintf("%s/v1/ai/generate", c.BaseURL)
+	respBody, err := c.post(url, req)
+	if err != nil {
+		return nil, err
+	}
+	defer respBody.Close()
+
+	var resp AiGenerateResponse
 	if err := json.NewDecoder(respBody).Decode(&resp); err != nil {
 		return nil, err
 	}

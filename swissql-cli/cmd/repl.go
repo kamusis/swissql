@@ -49,6 +49,7 @@ var replCmd = &cobra.Command{
 
 		fmt.Printf("SwissQL REPL (Session: %s)\n", entry.SessionId)
 		fmt.Println("Type 'exit' or 'quit' to leave, ';' at the end of a line to execute.")
+		fmt.Println("Use '/ai <prompt>' to generate SQL via backend and confirm before execution.")
 
 		var multiLineSql []string
 
@@ -76,6 +77,78 @@ var replCmd = &cobra.Command{
 			if strings.ToLower(input) == "exit" || strings.ToLower(input) == "quit" {
 				// Detach by default (do not disconnect)
 				break
+			}
+
+			if strings.HasPrefix(input, "/ai ") {
+				multiLineSql = nil
+				promptText := strings.TrimSpace(strings.TrimPrefix(input, "/ai "))
+				if promptText == "" {
+					fmt.Println("Error: /ai requires a prompt")
+					continue
+				}
+
+				line.AppendHistory(input)
+
+				aResp, err := c.AiGenerate(&client.AiGenerateRequest{
+					Prompt: promptText,
+					DbType: entry.DbType,
+				})
+				if err != nil {
+					fmt.Printf("Error: %v\n", err)
+					continue
+				}
+
+				if len(aResp.Warnings) > 0 {
+					for _, w := range aResp.Warnings {
+						fmt.Printf("Warning: %s\n", w)
+					}
+				}
+
+				if strings.TrimSpace(aResp.Sql) == "" {
+					fmt.Println("No SQL generated.")
+					continue
+				}
+
+				fmt.Println("Generated SQL:")
+				fmt.Println(aResp.Sql)
+
+				yes, _ := cmd.Flags().GetBool("yes")
+				execute := yes
+				if !yes {
+					confirm, err := line.Prompt("Execute? [Y/n] ")
+					if err != nil {
+						fmt.Printf("Error: %v\n", err)
+						continue
+					}
+					confirm = strings.TrimSpace(confirm)
+					execute = confirm == "" || strings.EqualFold(confirm, "y") || strings.EqualFold(confirm, "yes")
+					if strings.EqualFold(confirm, "n") || strings.EqualFold(confirm, "no") {
+						execute = false
+					}
+				}
+
+				if !execute {
+					fmt.Println("Aborted.")
+					continue
+				}
+
+				req := &client.ExecuteRequest{
+					SessionId: entry.SessionId,
+					Sql:       aResp.Sql,
+					Options: client.ExecuteOptions{
+						Limit:          0,
+						FetchSize:      50,
+						QueryTimeoutMs: 0,
+					},
+				}
+
+				resp, err := c.Execute(req)
+				if err != nil {
+					fmt.Printf("Error: %v\n", err)
+					continue
+				}
+				renderResponse(cmd, resp)
+				continue
 			}
 
 			multiLineSql = append(multiLineSql, input)

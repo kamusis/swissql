@@ -7,6 +7,9 @@
 # Spring Boot
 **/logs/
 
+# Local Spring profile config (contains secrets)
+/swissql-backend/src/main/resources/application-local.properties
+
 # Go
 *.exe
 *.dll

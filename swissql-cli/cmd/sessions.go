@@ -29,6 +29,7 @@ var lsCmd = &cobra.Command{
 	Use:   "ls",
 	Short: "List named sessions",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		prune, _ := cmd.Flags().GetBool("prune")
 		reg, err := config.LoadRegistry()
 		if err != nil {
 			return err
@@ -46,6 +47,38 @@ var lsCmd = &cobra.Command{
 		}
 
 		cfg, _ := config.LoadConfig()
+		if prune {
+			timeout, _ := cmd.Flags().GetInt("connection-timeout")
+			pruned := make([]string, 0)
+			for _, name := range names {
+				e := reg.Sessions[name]
+				c := client.NewClient(e.ServerURL, time.Duration(timeout)*time.Millisecond)
+				if err := c.Status(); err != nil {
+					reg.RemoveSession(name)
+					pruned = append(pruned, name)
+					if cfg != nil && cfg.CurrentName == name {
+						cfg.CurrentName = ""
+					}
+				}
+			}
+			if len(pruned) > 0 {
+				if err := config.SaveRegistry(reg); err != nil {
+					return err
+				}
+				if cfg != nil {
+					_ = config.SaveConfig(cfg)
+				}
+				fmt.Printf("Pruned %d unreachable session(s): %s\n", len(pruned), strings.Join(pruned, ", "))
+			}
+
+			// Rebuild names after pruning
+			names = make([]string, 0, len(reg.Sessions))
+			for name := range reg.Sessions {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+		}
+
 		for _, name := range names {
 			e := reg.Sessions[name]
 			marker := " "
@@ -141,6 +174,7 @@ var killCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(lsCmd)
+	lsCmd.Flags().Bool("prune", false, "Remove sessions whose backends are unreachable")
 	rootCmd.AddCommand(attachCmd)
 	rootCmd.AddCommand(attachAliasCmd)
 	rootCmd.AddCommand(killCmd)

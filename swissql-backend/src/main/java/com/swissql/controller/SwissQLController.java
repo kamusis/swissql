@@ -1,6 +1,7 @@
 package com.swissql.controller;
 
 import com.swissql.api.*;
+import com.swissql.service.AiSqlGenerateService;
 import com.swissql.service.DatabaseService;
 import com.swissql.service.SessionManager;
 import jakarta.validation.Valid;
@@ -20,10 +21,12 @@ public class SwissQLController {
 
     private final SessionManager sessionManager;
     private final DatabaseService databaseService;
+    private final AiSqlGenerateService aiSqlGenerateService;
 
-    public SwissQLController(SessionManager sessionManager, DatabaseService databaseService) {
+    public SwissQLController(SessionManager sessionManager, DatabaseService databaseService, AiSqlGenerateService aiSqlGenerateService) {
         this.sessionManager = sessionManager;
         this.databaseService = databaseService;
+        this.aiSqlGenerateService = aiSqlGenerateService;
     }
 
     /**
@@ -121,23 +124,33 @@ public class SwissQLController {
     @PostMapping("/ai/generate")
     public ResponseEntity<AiGenerateResponse> generateSql(
             @Valid @RequestBody AiGenerateRequest request) {
-        // TODO: Implement actual AI integration
+        var result = aiSqlGenerateService.generate(request);
 
-        // Stub response - LLM not configured yet
-        AiGenerateResponse response = AiGenerateResponse.builder()
-                .sql("")  // Empty - AI generation requires LLM configuration
-                .risk("UNKNOWN")
-                .explanation("AI generation requires LLM configuration. " +
-                            "Set OPENAI_API_KEY or DEEPSEEK_API_KEY environment variable to enable.")
-                .warnings(List.of(
-                    "LLM not configured - AI generation is disabled",
-                    "Set environment variable: export OPENAI_API_KEY=your-key",
-                    "Or use DEEPSEEK_API_KEY for DeepSeek LLM integration"
-                ))
+        AiGenerateResponse.AiGenerateResponseBuilder responseBuilder = AiGenerateResponse.builder()
                 .traceId(MDC.get("trace_id"))
-                .build();
+                .risk("UNKNOWN")
+                .explanation(null);
 
-        return ResponseEntity.ok(response);
+        if (!result.isEnabled()) {
+            return ResponseEntity.ok(responseBuilder
+                    .sql("")
+                    .warnings(result.getWarnings())
+                    .explanation("AI generation is disabled. Configure Portkey environment variables to enable.")
+                    .build());
+        }
+
+        if (result.getError() != null && !result.getError().isBlank()) {
+            return ResponseEntity.ok(responseBuilder
+                    .sql("")
+                    .warnings(List.of(result.getError()))
+                    .explanation("AI generation failed.")
+                    .build());
+        }
+
+        return ResponseEntity.ok(responseBuilder
+                .sql(result.getSql())
+                .warnings(List.of())
+                .build());
     }
 
     /**
