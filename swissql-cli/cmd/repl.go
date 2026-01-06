@@ -56,7 +56,8 @@ var replCmd = &cobra.Command{
 		}
 
 		fmt.Printf("SwissQL REPL (Session: %s)\n", entry.SessionId)
-		fmt.Println("Type 'exit' or 'quit' to leave, ';' at the end of a line to execute.")
+		fmt.Println("Type 'help' for commands. Use 'detach' to leave without disconnecting.")
+		fmt.Println("Type 'exit' or 'quit' to disconnect and remove this session.")
 		fmt.Println("Use '/ai <prompt>' to generate SQL via backend and confirm before execution.")
 
 		var multiLineSql []string
@@ -82,12 +83,39 @@ var replCmd = &cobra.Command{
 				continue
 			}
 
-			if strings.ToLower(input) == "exit" || strings.ToLower(input) == "quit" {
-				// Detach by default (do not disconnect)
+			lower := strings.ToLower(input)
+			if lower == "help" {
+				fmt.Println("Commands:")
+				fmt.Println("  help                          Show this help")
+				fmt.Println("  detach                        Leave REPL without disconnecting (like tmux detach)")
+				fmt.Println("  exit | quit                   Disconnect backend session and remove it from registry")
+				fmt.Println("  set display wide|narrow       Toggle truncation mode for tabular output")
+				fmt.Println("  set display width <n>         Set max column width for tabular output")
+				fmt.Println("  /ai <prompt>                  Generate SQL via AI and confirm before execution")
+				fmt.Println("  /context show                 Show recent executed SQL context used by AI")
+				fmt.Println("  /context clear                Clear AI context")
+				fmt.Println("Notes:")
+				fmt.Println("  - End a statement with ';' to execute")
+				continue
+			}
+			if lower == "detach" {
 				break
 			}
-
-			lower := strings.ToLower(input)
+			if lower == "exit" || lower == "quit" {
+				_ = c.Disconnect(entry.SessionId)
+				if name != "" {
+					reg, err := config.LoadRegistry()
+					if err == nil && reg != nil {
+						reg.RemoveSession(name)
+						_ = config.SaveRegistry(reg)
+					}
+					if cfg != nil && cfg.CurrentName == name {
+						cfg.CurrentName = ""
+						_ = config.SaveConfig(cfg)
+					}
+				}
+				break
+			}
 			if strings.HasPrefix(lower, "set display ") {
 				args := strings.Fields(lower)
 				if len(args) == 3 {
