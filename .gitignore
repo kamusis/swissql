@@ -1,0 +1,52 @@
+# Java / Maven
+/target/
+**/target/
+*.class
+*.log
+
+# Spring Boot
+**/logs/
+
+# Go
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/go.work
+/go.work.sum
+
+# Editor backups
+*~
+
+# Logs
+*.log
+
+# Go build output in this repo
+/swissql-cli/swissql.exe
+
+# IDEs
+/.idea/
+*.iml
+/.vscode/
+
+# Eclipse
+.classpath
+.project
+.factorypath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local scratch space (do not commit)
+/scratch/
+
+# Troubleshooting artifacts (do not commit)
+/swissql-backend/netstat_output*.txt
+
+# Desgin docs
+/design/
+
