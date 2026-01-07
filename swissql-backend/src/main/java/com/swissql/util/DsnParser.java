@@ -136,7 +136,11 @@ public class DsnParser {
         for (String pair : pairs) {
             int idx = pair.indexOf("=");
             if (idx > 0) {
-                params.put(pair.substring(0, idx), pair.substring(idx + 1));
+                String rawKey = pair.substring(0, idx);
+                String rawValue = pair.substring(idx + 1);
+                String key = URLDecoder.decode(rawKey, StandardCharsets.UTF_8);
+                String value = URLDecoder.decode(rawValue, StandardCharsets.UTF_8);
+                params.put(key, value);
             }
         }
         return params;

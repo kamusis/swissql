@@ -22,16 +22,6 @@ func init() {
 		"Backend server URL",
 	)
 
-	// Security flags (global - inherited by all subcommands)
-	rootCmd.PersistentFlags().Bool(
-		"read-only", true,
-		"Execute queries in read-only mode (default: true)",
-	)
-	rootCmd.PersistentFlags().Bool(
-		"read-write", false,
-		"Allow write operations (DML/DDL). Requires backend permission.",
-	)
-
 	// AI & confirmation flags (global)
 	rootCmd.PersistentFlags().Bool(
 		"use-mcp", false,

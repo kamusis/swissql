@@ -20,8 +20,6 @@ var connectCmd = &cobra.Command{
 		dsn := args[0]
 		server, _ := cmd.Flags().GetString("server")
 		name, _ := cmd.Flags().GetString("name")
-		readWrite, _ := cmd.Flags().GetBool("read-write")
-		readOnly, _ := cmd.Flags().GetBool("read-only")
 		timeout, _ := cmd.Flags().GetInt("connection-timeout")
 		useMcp, _ := cmd.Flags().GetBool("use-mcp")
 
@@ -32,20 +30,12 @@ var connectCmd = &cobra.Command{
 
 		fmt.Printf("Connecting to %s via backend %s...\n", dsn, server)
 
-		// Default to read-write; only enable read-only if explicitly requested.
-		resolvedReadOnly := false
-		if cmd.Flags().Changed("read-only") {
-			resolvedReadOnly = readOnly
-		} else if cmd.Flags().Changed("read-write") {
-			resolvedReadOnly = !readWrite
-		}
-
 		c := client.NewClient(server, time.Duration(timeout)*time.Millisecond)
 		req := &client.ConnectRequest{
 			Dsn:    dsn,
 			DbType: dbType,
 			Options: client.ConnectOptions{
-				ReadOnly:            resolvedReadOnly,
+				ReadOnly:            false,
 				UseMcp:              useMcp,
 				ConnectionTimeoutMs: timeout,
 			},
@@ -103,6 +93,5 @@ func startRepl(cmd *cobra.Command) error {
 
 func init() {
 	rootCmd.AddCommand(connectCmd)
-	connectCmd.Flags().Bool("read-write", false, "Enable read-write mode")
 	connectCmd.Flags().String("name", "", "Name this session (tmux-like)")
 }
