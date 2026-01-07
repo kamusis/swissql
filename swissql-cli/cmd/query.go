@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -17,6 +20,13 @@ import (
 var displayWide bool
 var displayMaxColWidth = 32
 var displayMaxQueryWidth = 60
+
+var displayExpanded bool
+
+var outputFormat = "table"
+
+var outputWriter io.Writer = os.Stdout
+var outputFile *os.File
 
 func clampInt(v, min, max int) int {
 	if v < min {
@@ -52,6 +62,55 @@ func setDisplayWidth(width int) {
 
 func setDisplayQueryWidth(width int) {
 	displayMaxQueryWidth = clampInt(width, 8, 2000)
+}
+
+func setDisplayExpanded(v bool) {
+	displayExpanded = v
+}
+
+func isSupportedOutputFormat(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "table", "csv", "tsv", "json":
+		return true
+	default:
+		return false
+	}
+}
+
+func setOutputFormat(s string) error {
+	f := strings.ToLower(strings.TrimSpace(s))
+	if !isSupportedOutputFormat(f) {
+		return fmt.Errorf("unsupported output format: %s", s)
+	}
+	outputFormat = f
+	return nil
+}
+
+func setOutputFile(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("file path is required")
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if outputFile != nil {
+		_ = outputFile.Close()
+	}
+	outputFile = f
+	outputWriter = f
+	return nil
+}
+
+func resetOutputWriter() error {
+	if outputFile != nil {
+		if err := outputFile.Close(); err != nil {
+			return err
+		}
+		outputFile = nil
+	}
+	outputWriter = os.Stdout
+	return nil
 }
 
 func parseDisplayWidthArg(s string) (int, error) {
@@ -95,8 +154,85 @@ var queryCmd = &cobra.Command{
 }
 
 func renderResponse(cmd *cobra.Command, resp *client.ExecuteResponse) {
+	w := outputWriter
+	if w == nil {
+		w = os.Stdout
+	}
+
 	if resp.Type == "tabular" {
-		table := tablewriter.NewWriter(os.Stdout)
+		if strings.EqualFold(outputFormat, "json") {
+			b, err := json.Marshal(resp.Data.Rows)
+			if err != nil {
+				fmt.Fprintf(w, "%v\n", err)
+				return
+			}
+			fmt.Fprintf(w, "%s\n", string(b))
+			fmt.Fprintf(w, "\n(%d rows, %d ms)\n", resp.Metadata.RowsAffected, resp.Metadata.DurationMs)
+			if resp.Metadata.Truncated {
+				fmt.Fprintln(w, "Warning: Results truncated to limit.")
+			}
+			return
+		}
+
+		if strings.EqualFold(outputFormat, "csv") || strings.EqualFold(outputFormat, "tsv") {
+			csvWriter := csv.NewWriter(w)
+			if strings.EqualFold(outputFormat, "tsv") {
+				csvWriter.Comma = '\t'
+			}
+			headers := make([]string, len(resp.Data.Columns))
+			for i, col := range resp.Data.Columns {
+				headers[i] = col.Name
+			}
+			_ = csvWriter.Write(headers)
+
+			for _, row := range resp.Data.Rows {
+				values := make([]string, len(resp.Data.Columns))
+				for i, col := range resp.Data.Columns {
+					cell := fmt.Sprintf("%v", row[col.Name])
+					cell = strings.ReplaceAll(cell, "\r\n", "\n")
+					values[i] = cell
+				}
+				_ = csvWriter.Write(values)
+			}
+			csvWriter.Flush()
+			if err := csvWriter.Error(); err != nil {
+				fmt.Fprintf(w, "%v\n", err)
+				return
+			}
+			fmt.Fprintf(w, "\n(%d rows, %d ms)\n", resp.Metadata.RowsAffected, resp.Metadata.DurationMs)
+			if resp.Metadata.Truncated {
+				fmt.Fprintln(w, "Warning: Results truncated to limit.")
+			}
+			return
+		}
+
+		if displayExpanded {
+			for rowIdx, row := range resp.Data.Rows {
+				if rowIdx > 0 {
+					fmt.Fprintln(w)
+				}
+				for _, col := range resp.Data.Columns {
+					cell := fmt.Sprintf("%v", row[col.Name])
+					cell = strings.ReplaceAll(cell, "\r\n", "\n")
+					cell = strings.ReplaceAll(cell, "\t", " ")
+					if !displayWide {
+						maxWidth := displayMaxColWidth
+						if col.Name == "query" || col.Name == "QUERY" {
+							maxWidth = displayMaxQueryWidth
+						}
+						cell = truncateWithEllipsisCell(strings.ReplaceAll(cell, "\n", " "), maxWidth)
+					}
+					fmt.Fprintf(w, "%s: %s\n", col.Name, cell)
+				}
+			}
+			fmt.Fprintf(w, "\n(%d rows, %d ms)\n", resp.Metadata.RowsAffected, resp.Metadata.DurationMs)
+			if resp.Metadata.Truncated {
+				fmt.Fprintln(w, "Warning: Results truncated to limit.")
+			}
+			return
+		}
+
+		table := tablewriter.NewWriter(w)
 		// Preserve column names exactly as returned by the backend (e.g. TABLE_NAME).
 		table.Options(tablewriter.WithConfig(tablewriter.Config{
 			Header: tw.CellConfig{
@@ -143,13 +279,13 @@ func renderResponse(cmd *cobra.Command, resp *client.ExecuteResponse) {
 			table.Append(values...)
 		}
 		table.Render()
-		fmt.Printf("\n(%d rows, %d ms)\n", resp.Metadata.RowsAffected, resp.Metadata.DurationMs)
+		fmt.Fprintf(w, "\n(%d rows, %d ms)\n", resp.Metadata.RowsAffected, resp.Metadata.DurationMs)
 		if resp.Metadata.Truncated {
-			fmt.Println("Warning: Results truncated to limit.")
+			fmt.Fprintln(w, "Warning: Results truncated to limit.")
 		}
 	} else {
-		fmt.Println(resp.Data.TextContent)
-		fmt.Printf("\n(%d ms)\n", resp.Metadata.DurationMs)
+		fmt.Fprintln(w, resp.Data.TextContent)
+		fmt.Fprintf(w, "\n(%d ms)\n", resp.Metadata.DurationMs)
 	}
 }
 
@@ -157,8 +293,12 @@ func init() {
 	cfg, err := config.LoadConfig()
 	if err == nil && cfg != nil {
 		displayWide = cfg.DisplayWide
+		displayExpanded = cfg.DisplayExpanded
 		displayMaxColWidth = cfg.Display.MaxColWidth
 		displayMaxQueryWidth = cfg.Display.MaxQueryWidth
+		if err := setOutputFormat(cfg.OutputFormat); err == nil {
+			// already set
+		}
 	}
 	rootCmd.AddCommand(queryCmd)
 	queryCmd.Flags().String("name", "", "Session name to use (tmux-like)")

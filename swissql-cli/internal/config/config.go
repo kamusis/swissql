@@ -7,15 +7,26 @@ import (
 )
 
 type Config struct {
-	CurrentName string `json:"current_name"`
-	DisplayWide bool   `json:"display_wide"`
-	History     struct {
+	CurrentName     string `json:"current_name"`
+	DisplayWide     bool   `json:"display_wide"`
+	DisplayExpanded bool   `json:"display_expanded"`
+	OutputFormat    string `json:"output_format"`
+	History         struct {
 		Mode string `json:"mode"`
 	} `json:"history"`
 	Display struct {
 		MaxColWidth   int `json:"max_col_width"`
 		MaxQueryWidth int `json:"max_query_width"`
 	} `json:"display"`
+}
+
+func normalizeOutputFormat(format string) string {
+	switch format {
+	case "table", "csv", "tsv", "json":
+		return format
+	default:
+		return "table"
+	}
 }
 
 func normalizeHistoryMode(mode string) string {
@@ -66,6 +77,8 @@ func LoadConfig() (*Config, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		cfg := &Config{}
 		cfg.DisplayWide = false
+		cfg.DisplayExpanded = false
+		cfg.OutputFormat = "table"
 		cfg.History.Mode = "safe_only"
 		cfg.Display.MaxColWidth = 32
 		cfg.Display.MaxQueryWidth = 60
@@ -84,6 +97,7 @@ func LoadConfig() (*Config, error) {
 
 	// Defaults for newly introduced fields
 	cfg.History.Mode = normalizeHistoryMode(cfg.History.Mode)
+	cfg.OutputFormat = normalizeOutputFormat(cfg.OutputFormat)
 	if cfg.Display.MaxColWidth == 0 {
 		cfg.Display.MaxColWidth = 32
 	}

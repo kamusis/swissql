@@ -226,6 +226,15 @@ func shouldRecordHistory(mode string, input string, isSql bool) bool {
 		if strings.HasPrefix(sLower, "set display ") {
 			return true
 		}
+		if strings.HasPrefix(sLower, "set output ") {
+			return true
+		}
+		if strings.HasPrefix(s, "\\x") {
+			return true
+		}
+		if strings.HasPrefix(s, "\\o") {
+			return true
+		}
 		return false
 	default:
 		return false
@@ -697,8 +706,10 @@ var replCmd = &cobra.Command{
 		cfg, err := config.LoadConfig()
 		if err == nil && cfg != nil {
 			setDisplayWide(cfg.DisplayWide)
+			setDisplayExpanded(cfg.DisplayExpanded)
 			setDisplayWidth(cfg.Display.MaxColWidth)
 			setDisplayQueryWidth(cfg.Display.MaxQueryWidth)
+			_ = setOutputFormat(cfg.OutputFormat)
 		}
 
 		line := liner.NewLiner()
@@ -747,9 +758,17 @@ var replCmd = &cobra.Command{
 					line.AppendHistory(input)
 				}
 				fmt.Println("Commands:")
+				fmt.Println("")
+				fmt.Println("[CLI]")
 				fmt.Println("  help                          Show this help")
 				fmt.Println("  detach                        Leave REPL without disconnecting (like tmux detach)")
 				fmt.Println("  exit | quit                   Disconnect backend session and remove it from registry")
+				fmt.Println("  set display wide|narrow       Toggle truncation mode for tabular output")
+				fmt.Println("  set display expanded on|off   Expanded display mode")
+				fmt.Println("  set display width <n>         Set max column width for tabular output")
+				fmt.Println("  set output table|csv|tsv|json Set output format")
+				fmt.Println("")
+				fmt.Println("[psql-compat (\\)]")
 				fmt.Println("  \\conninfo                    Show current session and backend information")
 				fmt.Println("  \\d <name> (alias: desc)       Describe a table/view")
 				fmt.Println("  \\d+ <name> (alias: desc+)     Describe with more details")
@@ -759,11 +778,15 @@ var replCmd = &cobra.Command{
 				fmt.Println("  \\explain analyze <sql> (alias: explain analyze)")
 				fmt.Println("                               Show actual execution plan (executes the statement)")
 				fmt.Println("  \\i <file> (alias: @<file>)    Execute statements from a file")
-				fmt.Println("  set display wide|narrow       Toggle truncation mode for tabular output")
-				fmt.Println("  set display width <n>         Set max column width for tabular output")
+				fmt.Println("  \\x [on|off]                   Expanded display mode (like psql \\\\x)")
+				fmt.Println("  \\o <file>                     Redirect query output to a file")
+				fmt.Println("  \\o                            Restore output to stdout")
+				fmt.Println("")
+				fmt.Println("[AI (/)]")
 				fmt.Println("  /ai <prompt>                  Generate SQL via AI and confirm before execution")
 				fmt.Println("  /context show                 Show recent executed SQL context used by AI")
 				fmt.Println("  /context clear                Clear AI context")
+				fmt.Println("")
 				fmt.Println("Notes:")
 				fmt.Println("  - End a statement with ';' to execute")
 				continue
@@ -826,6 +849,26 @@ var replCmd = &cobra.Command{
 						continue
 					}
 				}
+				if len(args) == 4 && args[2] == "expanded" {
+					switch args[3] {
+					case "on":
+						setDisplayExpanded(true)
+						if cfg != nil {
+							cfg.DisplayExpanded = true
+							_ = config.SaveConfig(cfg)
+						}
+						fmt.Println("Expanded display mode enabled.")
+						continue
+					case "off":
+						setDisplayExpanded(false)
+						if cfg != nil {
+							cfg.DisplayExpanded = false
+							_ = config.SaveConfig(cfg)
+						}
+						fmt.Println("Expanded display mode disabled.")
+						continue
+					}
+				}
 				if len(args) == 4 && args[2] == "width" {
 					w, err := parseDisplayWidthArg(args[3])
 					if err != nil {
@@ -840,7 +883,28 @@ var replCmd = &cobra.Command{
 					fmt.Printf("Display column width set to %d.\n", displayMaxColWidth)
 					continue
 				}
-				fmt.Println("Usage: set display wide|narrow|width <n>")
+				fmt.Println("Usage: set display wide|narrow|expanded on|off|width <n>")
+				continue
+			}
+
+			if strings.HasPrefix(lower, "set output ") {
+				if shouldRecordHistory(cfg.History.Mode, input, false) {
+					line.AppendHistory(input)
+				}
+				args := strings.Fields(lower)
+				if len(args) == 3 {
+					if err := setOutputFormat(args[2]); err != nil {
+						fmt.Printf("Error: %v\n", err)
+						continue
+					}
+					if cfg != nil {
+						cfg.OutputFormat = strings.ToLower(strings.TrimSpace(args[2]))
+						_ = config.SaveConfig(cfg)
+					}
+					fmt.Printf("Output format set to %s.\n", strings.ToLower(strings.TrimSpace(args[2])))
+					continue
+				}
+				fmt.Println("Usage: set output table|csv|tsv|json")
 				continue
 			}
 
@@ -850,6 +914,65 @@ var replCmd = &cobra.Command{
 				cmdLower := strings.ToLower(cmdName)
 
 				switch {
+				case cmdLower == "\\x":
+					if shouldRecordHistory(cfg.History.Mode, input, false) {
+						line.AppendHistory(input)
+					}
+					if len(args) == 0 {
+						setDisplayExpanded(!displayExpanded)
+						if cfg != nil {
+							cfg.DisplayExpanded = displayExpanded
+							_ = config.SaveConfig(cfg)
+						}
+						if displayExpanded {
+							fmt.Println("Expanded display mode enabled.")
+						} else {
+							fmt.Println("Expanded display mode disabled.")
+						}
+						continue
+					}
+					switch strings.ToLower(strings.TrimSpace(args[0])) {
+					case "on":
+						setDisplayExpanded(true)
+						if cfg != nil {
+							cfg.DisplayExpanded = true
+							_ = config.SaveConfig(cfg)
+						}
+						fmt.Println("Expanded display mode enabled.")
+						continue
+					case "off":
+						setDisplayExpanded(false)
+						if cfg != nil {
+							cfg.DisplayExpanded = false
+							_ = config.SaveConfig(cfg)
+						}
+						fmt.Println("Expanded display mode disabled.")
+						continue
+					default:
+						fmt.Println("Usage: \\x [on|off]")
+						continue
+					}
+
+				case cmdLower == "\\o":
+					if shouldRecordHistory(cfg.History.Mode, input, false) {
+						line.AppendHistory(input)
+					}
+					if len(args) == 0 {
+						if err := resetOutputWriter(); err != nil {
+							fmt.Printf("Error: %v\n", err)
+							continue
+						}
+						fmt.Println("Output restored to stdout.")
+						continue
+					}
+					path := trimTrailingSemicolon(args[0])
+					if err := setOutputFile(path); err != nil {
+						fmt.Printf("Error: %v\n", err)
+						continue
+					}
+					fmt.Printf("Output redirected to %s.\n", path)
+					continue
+
 				case cmdLower == "\\conninfo" || cmdLower == "conninfo":
 					if shouldRecordHistory(cfg.History.Mode, input, false) {
 						line.AppendHistory(input)
