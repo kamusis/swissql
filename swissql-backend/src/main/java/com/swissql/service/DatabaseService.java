@@ -26,6 +26,75 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DatabaseService {
     private final Map<String, HikariDataSource> dataSources = new ConcurrentHashMap<>();
 
+    public ExecuteResponse metaConninfo(SessionInfo session) {
+        ExecuteResponse response = new ExecuteResponse();
+        response.setType("tabular");
+
+        ExecuteResponse.DataContent data = new ExecuteResponse.DataContent();
+        data.setColumns(List.of(
+                buildColumn("key", "VARCHAR"),
+                buildColumn("value", "VARCHAR")
+        ));
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+        addConninfoRow(rows, "session_id", session.getSessionId());
+        addConninfoRow(rows, "db_type", session.getDbType());
+        addConninfoRow(rows, "dsn", session.getDsn());
+
+        if (session.getCreatedAt() != null) {
+            addConninfoRow(rows, "created_at", session.getCreatedAt().toString());
+        }
+        if (session.getLastAccessedAt() != null) {
+            addConninfoRow(rows, "last_accessed_at", session.getLastAccessedAt().toString());
+        }
+        if (session.getExpiresAt() != null) {
+            addConninfoRow(rows, "expires_at", session.getExpiresAt().toString());
+        }
+
+        String dbType = session.getDbType() != null ? session.getDbType().toLowerCase() : "";
+        try {
+            DataSource ds = getDataSource(session);
+            try (Connection conn = ds.getConnection()) {
+                addConninfoRow(rows, "jdbc_url", safeGet(() -> conn.getMetaData().getURL()));
+                addConninfoRow(rows, "jdbc_driver", safeGet(() -> conn.getMetaData().getDriverName()));
+                addConninfoRow(rows, "jdbc_driver_version", safeGet(() -> conn.getMetaData().getDriverVersion()));
+                addConninfoRow(rows, "database_product", safeGet(() -> conn.getMetaData().getDatabaseProductName()));
+                addConninfoRow(rows, "database_version", safeGet(() -> conn.getMetaData().getDatabaseProductVersion()));
+                addConninfoRow(rows, "jdbc_user", safeGet(() -> conn.getMetaData().getUserName()));
+
+                if ("postgres".equals(dbType) || "postgresql".equals(dbType)) {
+                    addConninfoRow(rows, "current_user", singleStringQuery(conn, "SELECT current_user"));
+                    addConninfoRow(rows, "current_database", singleStringQuery(conn, "SELECT current_database()"));
+                    addConninfoRow(rows, "current_schema", singleStringQuery(conn, "SELECT current_schema()"));
+                    addConninfoRow(rows, "server_addr", singleStringQuery(conn, "SELECT inet_server_addr()::text"));
+                    addConninfoRow(rows, "server_port", singleStringQuery(conn, "SELECT inet_server_port()::text"));
+                    addConninfoRow(rows, "server_version", singleStringQuery(conn, "SELECT version()"));
+                }
+
+                if ("oracle".equals(dbType)) {
+                    addConninfoRow(rows, "current_user", singleStringQuery(conn, "SELECT USER FROM DUAL"));
+                    addConninfoRow(rows, "current_schema", singleStringQuery(conn, "SELECT SYS_CONTEXT('USERENV','CURRENT_SCHEMA') FROM DUAL"));
+                    addConninfoRow(rows, "db_name", singleStringQuery(conn, "SELECT SYS_CONTEXT('USERENV','DB_NAME') FROM DUAL"));
+                    addConninfoRow(rows, "service_name", singleStringQuery(conn, "SELECT SYS_CONTEXT('USERENV','SERVICE_NAME') FROM DUAL"));
+                    addConninfoRow(rows, "instance_name", singleStringQuery(conn, "SELECT SYS_CONTEXT('USERENV','INSTANCE_NAME') FROM DUAL"));
+                    addConninfoRow(rows, "server_host", singleStringQuery(conn, "SELECT SYS_CONTEXT('USERENV','SERVER_HOST') FROM DUAL"));
+                }
+            }
+        } catch (Exception ignored) {
+            // Best effort only
+        }
+
+        data.setRows(rows);
+        response.setData(data);
+
+        ExecuteResponse.Metadata metadata = new ExecuteResponse.Metadata();
+        metadata.setRowsAffected(rows.size());
+        metadata.setTruncated(false);
+        metadata.setDurationMs(0);
+        response.setMetadata(metadata);
+        return response;
+    }
+
     public ExecuteResponse metaDescribe(SessionInfo session, String name, String detail) throws SQLException {
         String dbType = session.getDbType() != null ? session.getDbType().toLowerCase() : "";
         String resolvedDetail = detail != null && !detail.isBlank() ? detail.toLowerCase() : "basic";
@@ -107,6 +176,51 @@ public class DatabaseService {
         }
 
         throw new SQLException("Unsupported database type: " + dbType);
+    }
+
+    private ExecuteResponse.ColumnDefinition buildColumn(String name, String type) {
+        ExecuteResponse.ColumnDefinition col = new ExecuteResponse.ColumnDefinition();
+        col.setName(name);
+        col.setType(type);
+        return col;
+    }
+
+    private void addConninfoRow(List<Map<String, Object>> rows, String key, String value) {
+        rows.add(Map.of("key", key, "value", value != null ? value : ""));
+    }
+
+    private String singleStringQuery(Connection conn, String sql) {
+        if (conn == null || sql == null || sql.isBlank()) {
+            return "";
+        }
+        try (Statement st = conn.createStatement()) {
+            try (ResultSet rs = st.executeQuery(sql)) {
+                if (rs.next()) {
+                    String v = rs.getString(1);
+                    return v != null ? v : "";
+                }
+                return "";
+            }
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private String safeGet(SqlSupplier supplier) {
+        if (supplier == null) {
+            return "";
+        }
+        try {
+            String v = supplier.get();
+            return v != null ? v : "";
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    @FunctionalInterface
+    private interface SqlSupplier {
+        String get() throws Exception;
     }
 
     public ExecuteResponse metaList(SessionInfo session, String kind, String schema) throws SQLException {

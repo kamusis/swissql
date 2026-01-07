@@ -236,6 +236,24 @@ func (c *Client) MetaDescribe(sessionId string, name string, detail string) (*Ex
 	return &resp, nil
 }
 
+func (c *Client) MetaConninfo(sessionId string) (*ExecuteResponse, error) {
+	q := url.Values{}
+	q.Set("session_id", sessionId)
+	urlStr := fmt.Sprintf("%s/v1/meta/conninfo?%s", c.BaseURL, q.Encode())
+
+	body, err := c.get(urlStr)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp ExecuteResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) MetaList(sessionId string, kind string, schema string) (*ExecuteResponse, error) {
 	q := url.Values{}
 	q.Set("session_id", sessionId)

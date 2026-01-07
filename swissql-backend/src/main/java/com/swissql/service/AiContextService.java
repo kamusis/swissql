@@ -118,6 +118,31 @@ public class AiContextService {
         return out;
     }
 
+    private boolean isUnlimitedMetaCommand(String sql) {
+        if (sql == null) {
+            return false;
+        }
+
+        String lowered = sql.trim().toLowerCase(Locale.ROOT);
+        if (lowered.isBlank()) {
+            return false;
+        }
+
+        if (lowered.startsWith("\\\\dt") || lowered.startsWith("\\\\dv")) {
+            return false;
+        }
+
+        if (lowered.startsWith("\\\\d")) {
+            return true;
+        }
+
+        if (lowered.startsWith("\\\\explain")) {
+            return true;
+        }
+
+        return lowered.startsWith("\\\\conninfo");
+    }
+
     /**
      * Clear all context items for a session.
      *
@@ -135,6 +160,8 @@ public class AiContextService {
         item.setSql(sql);
         item.setExecutedAt(OffsetDateTime.now());
         item.setType(response.getType());
+
+        boolean unlimitedMeta = isUnlimitedMetaCommand(sql);
 
         ExecuteResponse.Metadata metadata = response.getMetadata();
         if (metadata != null) {
@@ -157,7 +184,11 @@ public class AiContextService {
             }
 
             if (data.getRows() != null && !data.getRows().isEmpty()) {
-                item.setSampleRows(sanitizeSampleRows(data.getRows()));
+                if (unlimitedMeta) {
+                    item.setSampleRows(data.getRows());
+                } else {
+                    item.setSampleRows(sanitizeSampleRows(data.getRows()));
+                }
             }
         }
 

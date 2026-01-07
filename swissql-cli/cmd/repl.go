@@ -289,11 +289,12 @@ var replCmd = &cobra.Command{
 					if shouldRecordHistory(cfg.History.Mode, input, false) {
 						line.AppendHistory(input)
 					}
-					fmt.Printf("Session name: %s\n", name)
-					fmt.Printf("Session id:   %s\n", entry.SessionId)
-					fmt.Printf("DB type:      %s\n", entry.DbType)
-					fmt.Printf("Remote host:  %s\n", entry.GetRemoteHost())
-					fmt.Printf("Backend:      %s\n", entry.ServerURL)
+					resp, err := c.MetaConninfo(entry.SessionId)
+					if err != nil {
+						fmt.Printf("%v\n", err)
+						continue
+					}
+					renderResponse(cmd, resp)
 					continue
 
 				case cmdLower == "desc" || cmdLower == "desc+" || cmdLower == "\\d" || cmdLower == "\\d+":

@@ -201,9 +201,13 @@ public class SwissQLController {
         }
 
         try {
+            String pseudoSql = buildMetaDescribePseudoSql(name, detail);
             ExecuteResponse response = databaseService.metaDescribe(sessionInfoOpt.get(), name, detail);
+            aiContextService.recordExecute(sessionId, pseudoSql, response);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
+            String pseudoSql = buildMetaDescribePseudoSql(name, detail);
+            aiContextService.recordExecuteError(sessionId, pseudoSql, e);
             return ResponseEntity.status(500).body(ErrorResponse.builder()
                     .code("EXECUTION_ERROR")
                     .message(e.getMessage())
@@ -228,9 +232,62 @@ public class SwissQLController {
         }
 
         try {
+            String pseudoSql = buildMetaListPseudoSql(kind, schema);
             ExecuteResponse response = databaseService.metaList(sessionInfoOpt.get(), kind, schema);
+            aiContextService.recordExecute(sessionId, pseudoSql, response);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
+            String pseudoSql = buildMetaListPseudoSql(kind, schema);
+            aiContextService.recordExecuteError(sessionId, pseudoSql, e);
+            return ResponseEntity.status(500).body(ErrorResponse.builder()
+                    .code("EXECUTION_ERROR")
+                    .message(e.getMessage())
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+    }
+
+    private String buildMetaDescribePseudoSql(String name, String detail) {
+        String resolvedName = name != null ? name.trim() : "";
+        String detailLower = detail != null ? detail.trim().toLowerCase() : "";
+        String cmd = "full".equals(detailLower) ? "\\\\d+" : "\\\\d";
+        if (resolvedName.isBlank()) {
+            return cmd;
+        }
+        return cmd + " " + resolvedName;
+    }
+
+    private String buildMetaListPseudoSql(String kind, String schema) {
+        String kindLower = kind != null ? kind.trim().toLowerCase() : "";
+        String cmd = "view".equals(kindLower) ? "\\\\dv" : "\\\\dt";
+
+        String resolvedSchema = schema != null ? schema.trim() : "";
+        if (resolvedSchema.isBlank()) {
+            return cmd;
+        }
+        return cmd + " " + resolvedSchema;
+    }
+
+    @GetMapping("/meta/conninfo")
+    public ResponseEntity<?> metaConninfo(
+            @RequestParam("session_id") String sessionId
+    ) {
+        var sessionInfoOpt = sessionManager.getSession(sessionId);
+        if (sessionInfoOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(ErrorResponse.builder()
+                    .code("SESSION_EXPIRED")
+                    .message("Session missing or expired")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        String pseudoSql = "\\\\conninfo";
+        try {
+            ExecuteResponse response = databaseService.metaConninfo(sessionInfoOpt.get());
+            aiContextService.recordExecute(sessionId, pseudoSql, response);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            aiContextService.recordExecuteError(sessionId, pseudoSql, e);
             return ResponseEntity.status(500).body(ErrorResponse.builder()
                     .code("EXECUTION_ERROR")
                     .message(e.getMessage())
@@ -252,14 +309,27 @@ public class SwissQLController {
 
         try {
             ExecuteResponse response = databaseService.metaExplain(sessionInfoOpt.get(), request.getSql(), request.isAnalyze());
+            String pseudoSql = buildMetaExplainPseudoSql(request.getSql(), request.isAnalyze());
+            aiContextService.recordExecute(request.getSessionId(), pseudoSql, response);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
+            String pseudoSql = buildMetaExplainPseudoSql(request.getSql(), request.isAnalyze());
+            aiContextService.recordExecuteError(request.getSessionId(), pseudoSql, e);
             return ResponseEntity.status(500).body(ErrorResponse.builder()
                     .code("EXECUTION_ERROR")
                     .message(e.getMessage())
                     .traceId(MDC.get("trace_id"))
                     .build());
         }
+    }
+
+    private String buildMetaExplainPseudoSql(String sql, boolean analyze) {
+        String resolvedSql = sql != null ? sql.trim() : "";
+        String cmd = analyze ? "\\\\explain analyze" : "\\\\explain";
+        if (resolvedSql.isBlank()) {
+            return cmd;
+        }
+        return cmd + " " + resolvedSql;
     }
 
     /**
