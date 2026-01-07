@@ -134,6 +134,8 @@ secrets:
     file: ./secrets/PORTKEY_MODEL
 ```
 
+> **Note for Windows users:** When specifying volume paths in `docker-compose.yml`, use single quotes (e.g., `'C:/path/to/wallet'`) or forward slashes to avoid issues with YAML parsing backslashes.
+
 ```bash
 docker compose up -d
 ```
