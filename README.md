@@ -26,48 +26,123 @@ User -> swissql-cli (Go) -> HTTP/JSON -> swissql-backend (Java/Spring Boot) -> J
 ```
 
 ## Quick Start
+
+- **Start swissql-backend (Docker)**
+
+```powershell
+# Windows PowerShell example:
+docker run -d --rm --name swissql-backend `
+  -p 8080:8080 `
+  ghcr.io/kamusis/swissql-backend
 ```
-# ./swissql connect "postgres://postgres:postgres@localhost:5433/postgres"
-Connecting to postgres://postgres:postgres@localhost:5433/postgres via backend http://localhost:8080...
-Connected successfully! Session ID: d76c7b90-8dd9-40e9-9ea0-28c2e615afe1
-SwissQL REPL (Session: d76c7b90-8dd9-40e9-9ea0-28c2e615afe1)
-Type 'help' for commands. Use 'detach' to leave without disconnecting.
-Type 'exit' or 'quit' to disconnect and remove this session.
-Use '/ai <prompt>' to generate SQL via backend and confirm before execution.
-swissql> help
-Commands:
 
-[CLI]
-  help                          Show this help
-  detach                        Leave REPL without disconnecting (like tmux detach)
-  exit | quit                   Disconnect backend session and remove it from registry
-  set display wide|narrow       Toggle truncation mode for tabular output
-  set display expanded on|off   Expanded display mode
-  set display width <n>         Set max column width for tabular output
-  set output table|csv|tsv|json Set output format
+- **Connect from SwissQL CLI to a Oracle database via the backend**
 
-[psql-compat (\)]
-  \conninfo                    Show current session and backend information
-  \d <name> (alias: desc)       Describe a table/view
-  \d+ <name> (alias: desc+)     Describe with more details
-  \dt | \dv                     List tables/views
-  \explain <sql> (alias: explain, explain plan for)
-                               Show execution plan
-  \explain analyze <sql> (alias: explain analyze)
-                               Show actual execution plan (executes the statement)
-  \i <file> (alias: @<file>)    Execute statements from a file
-  \x [on|off]                   Expanded display mode (like psql \\x)
-  \o <file>                     Redirect query output to a file
-  \o                            Restore output to stdout
+```bash
+swissql connect "oracle://user:password@host:port/serviceName"
+```
+- **Connect from SwissQL CLI to a PostgreSQL database via the backend**
 
-[AI (/)]
-  /ai <prompt>                  Generate SQL via AI and confirm before execution
-  /context show                 Show recent executed SQL context used by AI
-  /context clear                Clear AI context
+```bash
+# if Postgres runs on the host and backend runs in Docker, use host.docker.internal instead of localhost:
+./swissql connect "postgres://postgres:postgres@host.docker.internal:5432/postgres"
+```
 
-Notes:
-  - End a statement with ';' to execute
-swissql>
+## Advanced usage
+
+- **Enable AI features (Docker Compose + Docker secrets)**
+
+If you want to use `/ai ...`, you can enable the AI gateway by providing a few configuration values as Docker secrets (no `application.properties` file and no `/config` mount required).
+
+Recommended workflow (you can do this in any folder on your machine):
+
+1. Create a working directory (example name: `swissql-backend`) and `cd` into it.
+2. Create the 3 secret files under `./secrets/`.
+3. Create `docker-compose.yml` in the same directory.
+4. Start the container.
+
+Example (Windows PowerShell):
+
+```powershell
+# 1) Create a working directory anywhere
+mkdir swissql-backend
+cd swissql-backend
+
+# 2) Create secrets (files contain ONLY the raw value, no KEY= prefix)
+mkdir secrets
+Set-Content -NoNewline -Path .\secrets\PORTKEY_API_KEY -Value "<your_portkey_api_key>"
+Set-Content -NoNewline -Path .\secrets\PORTKEY_VIRTUAL_KEY -Value "<your_portkey_virtual_key>"
+Set-Content -NoNewline -Path .\secrets\PORTKEY_MODEL -Value "<your_model>"
+
+# 3) Create docker-compose.yml (see below)
+# 4) Start
+docker compose up -d
+```
+
+`docker-compose.yml` example (saved next to the `secrets/` folder):
+
+```yaml
+services:
+  swissql-backend:
+    image: ghcr.io/kamusis/swissql-backend:latest
+    container_name: swissql-backend
+    ports:
+      - "8080:8080"
+    secrets:
+      - PORTKEY_API_KEY
+      - PORTKEY_VIRTUAL_KEY
+      - PORTKEY_MODEL
+
+secrets:
+  PORTKEY_API_KEY:
+    file: ./secrets/PORTKEY_API_KEY
+  PORTKEY_VIRTUAL_KEY:
+    file: ./secrets/PORTKEY_VIRTUAL_KEY
+  PORTKEY_MODEL:
+    file: ./secrets/PORTKEY_MODEL
+```
+
+For additional (optional) settings, see the **AI setup** section below.
+
+- **Mounting Oracle wallets folder**
+
+If you are connecting to an Oracle instance in OCI (for example, Autonomous Database), you typically need an Oracle client wallet (mTLS) in order to authenticate and connect. In that case, you must mount the wallet directory into the container, and set `TNS_ADMIN` to the wallet path inside the container (for example, `/wallets/ora1`). You can mount multiple wallet directories at the same time (for example, `/wallets/ora1`, `/wallets/ora2`) and connect to different Oracle instances by setting `TNS_ADMIN` accordingly in each CLI connection string.
+
+`docker-compose.yml` example (AI secrets + multiple wallet mounts):
+
+```yaml
+services:
+  swissql-backend:
+    image: ghcr.io/kamusis/swissql-backend:latest
+    container_name: swissql-backend
+    ports:
+      - "8080:8080"
+    volumes:
+      - "/path/to/Wallet1_OCI:/wallets/ora1:ro"
+      - "/path/to/Wallet2_OCI:/wallets/ora2:ro"
+    secrets:
+      - PORTKEY_API_KEY
+      - PORTKEY_VIRTUAL_KEY
+      - PORTKEY_MODEL
+
+secrets:
+  PORTKEY_API_KEY:
+    file: ./secrets/PORTKEY_API_KEY
+  PORTKEY_VIRTUAL_KEY:
+    file: ./secrets/PORTKEY_VIRTUAL_KEY
+  PORTKEY_MODEL:
+    file: ./secrets/PORTKEY_MODEL
+```
+
+```bash
+docker compose up -d
+```
+
+Connect from SwissQL CLI to the Oracle instance in OCI via the backend
+
+```bash
+# Oracle (OCI) via mounted wallet (TNS_ADMIN points to the container path):
+./swissql connect "oracle://user:password@aora23ai_high?TNS_ADMIN=/wallets/ora1"
 ```
 
 ## Current MVP capabilities
@@ -82,7 +157,7 @@ The backend currently implements the following REST endpoints:
   - `GET /v1/sessions/validate?session_id=...`
 - **SQL execution**
   - `POST /v1/execute`
-- **Metadata helpers (psql-like commands)**
+- **Metadata helpers**
   - `GET /v1/meta/list?session_id=...&kind=table|view&schema=...`
   - `GET /v1/meta/describe?session_id=...&name=...&detail=full`
   - `GET /v1/meta/conninfo?session_id=...`
@@ -119,6 +194,10 @@ The CLI currently provides an interactive REPL with the following commands:
   - `/ai <prompt>` (generate SQL via AI and confirm before execution)
   - `/context show` (show recent executed SQL context used by AI)
   - `/context clear` (clear AI context)
+
+> **Note**
+> 
+> If you are not a developer, you can stop here. The content below is mainly for contributors/developers.
 
 ## **Architecture Principles**
 
