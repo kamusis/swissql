@@ -1165,7 +1165,7 @@ var replCmd = &cobra.Command{
 				sql = strings.TrimSuffix(sql, ";")
 				multiLineSql = nil
 
-				line.AppendHistory(sql + ";")
+				line.AppendHistory(strings.ReplaceAll(sql, "\n", " ") + ";")
 
 				req := &client.ExecuteRequest{
 					SessionId: entry.SessionId,
