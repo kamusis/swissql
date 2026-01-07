@@ -26,6 +26,11 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DatabaseService {
     private final Map<String, HikariDataSource> dataSources = new ConcurrentHashMap<>();
 
+    private static String buildMissingTnsAdminMessage(String tnsAdmin) {
+        return "TNS_ADMIN directory does not exist or is not a directory: " + tnsAdmin + ". "
+                + "If swissql-backend is running in a container, please refer to the user guide for how to load/mount the TNS_ADMIN directory in the container.";
+    }
+
     public ExecuteResponse metaConninfo(SessionInfo session) {
         ExecuteResponse response = new ExecuteResponse();
         response.setType("tabular");
@@ -347,23 +352,7 @@ public class DatabaseService {
     }
 
     public void testConnection(SessionInfo session) throws SQLException {
-        // 1. Pre-parse to get TNS_ADMIN and set global system properties immediately
         String dsn = session.getDsn();
-        String query = extractQuery(dsn);
-        Map<String, String> queryParams = DsnParser.parseQuery(query);
-        
-        if (queryParams.containsKey("TNS_ADMIN")) {
-            String tnsAdmin = queryParams.get("TNS_ADMIN").replace("\\", "/");
-            File tnsDir = new File(tnsAdmin);
-            if (tnsDir.exists() && tnsDir.isDirectory()) {
-                String walletLocation = "(SOURCE=(METHOD=file)(METHOD_DATA=(DIRECTORY=" + tnsAdmin + ")))";
-                System.setProperty("oracle.net.tns_admin", tnsAdmin);
-                System.setProperty("tns.admin", tnsAdmin);
-                System.setProperty("oracle.net.wallet_location", walletLocation);
-                log.info("Global TNS_ADMIN and Wallet properties set: {}", tnsAdmin);
-            }
-        }
-
         JdbcConnectionInfo info = DsnParser.parse(dsn, session.getDbType());
         log.info("Testing connection for DSN: {} (Type: {})", maskDsn(dsn), info.getDbType());
 
@@ -634,17 +623,6 @@ public class DatabaseService {
         String query = extractQuery(dsn);
         Map<String, String> queryParams = DsnParser.parseQuery(query);
 
-        if (queryParams.containsKey("TNS_ADMIN")) {
-            String tnsAdmin = queryParams.get("TNS_ADMIN").replace("\\", "/");
-            File tnsDir = new File(tnsAdmin);
-            if (tnsDir.exists() && tnsDir.isDirectory()) {
-                String walletLocation = "(SOURCE=(METHOD=file)(METHOD_DATA=(DIRECTORY=" + tnsAdmin + ")))";
-                System.setProperty("oracle.net.tns_admin", tnsAdmin);
-                System.setProperty("tns.admin", tnsAdmin);
-                System.setProperty("oracle.net.wallet_location", walletLocation);
-            }
-        }
-
         JdbcConnectionInfo info = DsnParser.parse(dsn, session.getDbType());
         HikariConfig config = new HikariConfig();
         config.setJdbcUrl(info.getUrl());
@@ -656,6 +634,10 @@ public class DatabaseService {
 
             if (queryParams.containsKey("TNS_ADMIN")) {
                 String tnsAdmin = queryParams.get("TNS_ADMIN").replace("\\", "/");
+                File tnsDir = new File(tnsAdmin);
+                if (!tnsDir.exists() || !tnsDir.isDirectory()) {
+                    throw new IllegalArgumentException(buildMissingTnsAdminMessage(tnsAdmin));
+                }
                 String walletLocation = "(SOURCE=(METHOD=file)(METHOD_DATA=(DIRECTORY=" + tnsAdmin + ")))";
                 config.addDataSourceProperty("oracle.net.tns_admin", tnsAdmin);
                 config.addDataSourceProperty("oracle.net.wallet_location", walletLocation);
