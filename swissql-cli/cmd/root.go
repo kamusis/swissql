@@ -9,6 +9,7 @@ var rootCmd = &cobra.Command{
 	Short: "SwissQL is a database 'Swiss Army Knife' CLI",
 	Long: `A unified, modern, AI-driven cross-database interactive entry point
 for DBAs, developers, DevOps, and data analysts.`,
+	SilenceErrors: true,
 }
 
 func Execute() error {
