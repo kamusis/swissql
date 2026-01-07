@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -517,8 +518,40 @@ var replCmd = &cobra.Command{
 					continue
 				}
 
+				type aiStatementsPayload struct {
+					Statements []string `json:"statements"`
+				}
+				var payload aiStatementsPayload
+				if err := json.Unmarshal([]byte(aResp.Sql), &payload); err != nil {
+					fmt.Println("Error: AI output is not valid JSON.")
+					continue
+				}
+				if len(payload.Statements) == 0 {
+					fmt.Println("No SQL statements generated.")
+					continue
+				}
+
+				statements := make([]string, 0, len(payload.Statements))
+				for _, s := range payload.Statements {
+					sql := trimTrailingSemicolon(s)
+					if strings.TrimSpace(sql) == "" {
+						continue
+					}
+					statements = append(statements, sql)
+				}
+				if len(statements) == 0 {
+					fmt.Println("No SQL statements generated.")
+					continue
+				}
+
 				fmt.Println("Generated SQL:")
-				fmt.Println(aResp.Sql)
+				for i, sql := range statements {
+					displaySql := strings.TrimSpace(sql)
+					if displaySql != "" && !strings.HasSuffix(displaySql, ";") {
+						displaySql += ";"
+					}
+					fmt.Printf("[%d] %s\n", i+1, displaySql)
+				}
 
 				yes, _ := cmd.Flags().GetBool("yes")
 				execute := yes
@@ -540,22 +573,24 @@ var replCmd = &cobra.Command{
 					continue
 				}
 
-				req := &client.ExecuteRequest{
-					SessionId: entry.SessionId,
-					Sql:       aResp.Sql,
-					Options: client.ExecuteOptions{
-						Limit:          0,
-						FetchSize:      50,
-						QueryTimeoutMs: 0,
-					},
-				}
+				for i, sql := range statements {
+					req := &client.ExecuteRequest{
+						SessionId: entry.SessionId,
+						Sql:       sql,
+						Options: client.ExecuteOptions{
+							Limit:          0,
+							FetchSize:      50,
+							QueryTimeoutMs: 0,
+						},
+					}
 
-				resp, err := c.Execute(req)
-				if err != nil {
-					fmt.Printf("%v\n", err)
-					continue
+					resp, err := c.Execute(req)
+					if err != nil {
+						fmt.Printf("Statement [%d] failed: %v\n", i+1, err)
+						break
+					}
+					renderResponse(cmd, resp)
 				}
-				renderResponse(cmd, resp)
 				continue
 			}
 

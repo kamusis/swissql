@@ -156,12 +156,12 @@ public class AiSqlGenerateService {
             JsonNode contentNode = root.path("choices").path(0).path("message").path("content");
             String content = contentNode.isTextual() ? contentNode.asText() : "";
 
-            String sql = sanitizeSql(content);
-            if (sql.isBlank()) {
-                return GeneratedSqlResult.error("AI gateway returned an empty SQL result");
+            String sqlJson = sanitizeStatementsJson(content);
+            if (sqlJson.isBlank()) {
+                return GeneratedSqlResult.error("AI gateway returned invalid JSON output");
             }
 
-            return GeneratedSqlResult.success(sql);
+            return GeneratedSqlResult.success(sqlJson);
         } catch (Exception e) {
             return GeneratedSqlResult.error("AI generation failed: " + e.getMessage());
         }
@@ -179,8 +179,10 @@ public class AiSqlGenerateService {
     }
 
     private String buildSystemPrompt(String dbType) {
-        return "You are a SQL generator. Output ONLY a single SQL statement and nothing else. " +
+        return "You are a SQL generator. Output ONLY valid JSON and nothing else. " +
                 "Do not use markdown fences. Do not add explanations. " +
+                "Output schema: {\"statements\": [\"<SQL statement 1>\", \"<SQL statement 2>\", ...]}. " +
+                "Each statement must be a complete SQL statement WITHOUT a trailing semicolon. " +
                 "Target database dialect: " + dbType + ".";
     }
 
@@ -197,6 +199,29 @@ public class AiSqlGenerateService {
         }
 
         return s;
+    }
+
+    private String sanitizeStatementsJson(String content) {
+        String s = sanitizeSql(content);
+        if (s.isBlank()) {
+            return "";
+        }
+
+        try {
+            JsonNode root = objectMapper.readTree(s);
+            JsonNode statementsNode = root.path("statements");
+            if (!statementsNode.isArray() || statementsNode.isEmpty()) {
+                return "";
+            }
+            for (JsonNode n : statementsNode) {
+                if (!n.isTextual() || n.asText().trim().isEmpty()) {
+                    return "";
+                }
+            }
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     private String buildUserPrompt(AiGenerateRequest request) {
