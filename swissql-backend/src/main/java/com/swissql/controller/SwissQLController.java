@@ -185,6 +185,83 @@ public class SwissQLController {
         return ResponseEntity.ok(Map.of("valid", "true"));
     }
 
+    @GetMapping("/meta/describe")
+    public ResponseEntity<?> metaDescribe(
+            @RequestParam("session_id") String sessionId,
+            @RequestParam("name") String name,
+            @RequestParam(value = "detail", required = false) String detail
+    ) {
+        var sessionInfoOpt = sessionManager.getSession(sessionId);
+        if (sessionInfoOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(ErrorResponse.builder()
+                    .code("SESSION_EXPIRED")
+                    .message("Session missing or expired")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        try {
+            ExecuteResponse response = databaseService.metaDescribe(sessionInfoOpt.get(), name, detail);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(ErrorResponse.builder()
+                    .code("EXECUTION_ERROR")
+                    .message(e.getMessage())
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+    }
+
+    @GetMapping("/meta/list")
+    public ResponseEntity<?> metaList(
+            @RequestParam("session_id") String sessionId,
+            @RequestParam("kind") String kind,
+            @RequestParam(value = "schema", required = false) String schema
+    ) {
+        var sessionInfoOpt = sessionManager.getSession(sessionId);
+        if (sessionInfoOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(ErrorResponse.builder()
+                    .code("SESSION_EXPIRED")
+                    .message("Session missing or expired")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        try {
+            ExecuteResponse response = databaseService.metaList(sessionInfoOpt.get(), kind, schema);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(ErrorResponse.builder()
+                    .code("EXECUTION_ERROR")
+                    .message(e.getMessage())
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+    }
+
+    @PostMapping("/meta/explain")
+    public ResponseEntity<?> metaExplain(@Valid @RequestBody MetaExplainRequest request) {
+        var sessionInfoOpt = sessionManager.getSession(request.getSessionId());
+        if (sessionInfoOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(ErrorResponse.builder()
+                    .code("SESSION_EXPIRED")
+                    .message("Session missing or expired")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        try {
+            ExecuteResponse response = databaseService.metaExplain(sessionInfoOpt.get(), request.getSql(), request.isAnalyze());
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(ErrorResponse.builder()
+                    .code("EXECUTION_ERROR")
+                    .message(e.getMessage())
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+    }
+
     /**
      * Retrieve recent executed SQL context that may be included in AI prompts.
      *

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -11,6 +12,98 @@ import (
 	"github.com/peterh/liner"
 	"github.com/spf13/cobra"
 )
+
+func isMetaCommandStart(s string) bool {
+	if s == "" {
+		return false
+	}
+	return strings.HasPrefix(s, "\\") || strings.HasPrefix(strings.ToLower(s), "desc") || strings.HasPrefix(strings.ToLower(s), "explain") || strings.HasPrefix(s, "@") || strings.EqualFold(s, "conninfo")
+}
+
+func parseMetaCommand(input string) (string, []string) {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return "", nil
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return "", nil
+	}
+	cmd := fields[0]
+	args := []string{}
+	if len(fields) > 1 {
+		args = fields[1:]
+	}
+	return cmd, args
+}
+
+func readFileContent(baseDir string, path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("file path is required")
+	}
+	p := path
+	if baseDir != "" && !filepath.IsAbs(path) {
+		p = filepath.Join(baseDir, path)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func trimTrailingSemicolon(s string) string {
+	t := strings.TrimSpace(s)
+	if strings.HasSuffix(t, ";") {
+		return strings.TrimSpace(strings.TrimSuffix(t, ";"))
+	}
+	return t
+}
+
+func shouldRecordHistory(mode string, input string, isSql bool) bool {
+	if isSql {
+		return true
+	}
+
+	s := strings.TrimSpace(input)
+	if s == "" {
+		return false
+	}
+
+	sLower := strings.ToLower(s)
+
+	switch mode {
+	case "all":
+		return true
+	case "sql_only":
+		return false
+	case "safe_only":
+		if strings.HasPrefix(sLower, "/ai") || strings.HasPrefix(sLower, "/context") {
+			return false
+		}
+		if strings.HasPrefix(s, "@") || strings.HasPrefix(s, "\\i") {
+			return false
+		}
+		if strings.HasPrefix(s, "\\d") || strings.HasPrefix(sLower, "desc") {
+			return true
+		}
+		if strings.HasPrefix(s, "\\dt") || strings.HasPrefix(s, "\\dv") {
+			return true
+		}
+		if strings.HasPrefix(s, "\\explain") || strings.HasPrefix(sLower, "explain") {
+			return true
+		}
+		if sLower == "conninfo" || sLower == "\\conninfo" {
+			return true
+		}
+		if strings.HasPrefix(sLower, "set display ") {
+			return true
+		}
+		return false
+	default:
+		return false
+	}
+}
 
 var replCmd = &cobra.Command{
 	Use:   "repl",
@@ -85,10 +178,22 @@ var replCmd = &cobra.Command{
 
 			lower := strings.ToLower(input)
 			if lower == "help" {
+				if shouldRecordHistory(cfg.History.Mode, input, false) {
+					line.AppendHistory(input)
+				}
 				fmt.Println("Commands:")
 				fmt.Println("  help                          Show this help")
 				fmt.Println("  detach                        Leave REPL without disconnecting (like tmux detach)")
 				fmt.Println("  exit | quit                   Disconnect backend session and remove it from registry")
+				fmt.Println("  \\conninfo                    Show current session and backend information")
+				fmt.Println("  \\d <name> (alias: desc)       Describe a table/view")
+				fmt.Println("  \\d+ <name> (alias: desc+)     Describe with more details")
+				fmt.Println("  \\dt | \\dv                     List tables/views")
+				fmt.Println("  \\explain <sql> (alias: explain, explain plan for)")
+				fmt.Println("                               Show execution plan")
+				fmt.Println("  \\explain analyze <sql> (alias: explain analyze)")
+				fmt.Println("                               Show actual execution plan (executes the statement)")
+				fmt.Println("  \\i <file> (alias: @<file>)    Execute statements from a file")
 				fmt.Println("  set display wide|narrow       Toggle truncation mode for tabular output")
 				fmt.Println("  set display width <n>         Set max column width for tabular output")
 				fmt.Println("  /ai <prompt>                  Generate SQL via AI and confirm before execution")
@@ -99,17 +204,32 @@ var replCmd = &cobra.Command{
 				continue
 			}
 			if lower == "detach" {
+				if shouldRecordHistory(cfg.History.Mode, input, false) {
+					line.AppendHistory(input)
+				}
 				break
 			}
 			if lower == "exit" || lower == "quit" {
-				_ = c.Disconnect(entry.SessionId)
-				if name != "" {
+				if shouldRecordHistory(cfg.History.Mode, input, false) {
+					line.AppendHistory(input)
+				}
+				if err := c.Disconnect(entry.SessionId); err != nil {
+					fmt.Printf("%v\n", err)
+				}
+
+				resolvedName := name
+				if strings.TrimSpace(resolvedName) == "" && cfg != nil {
+					resolvedName = cfg.CurrentName
+				}
+				resolvedName = strings.TrimSpace(resolvedName)
+
+				if resolvedName != "" {
 					reg, err := config.LoadRegistry()
 					if err == nil && reg != nil {
-						reg.RemoveSession(name)
+						reg.RemoveSession(resolvedName)
 						_ = config.SaveRegistry(reg)
 					}
-					if cfg != nil && cfg.CurrentName == name {
+					if cfg != nil && cfg.CurrentName == resolvedName {
 						cfg.CurrentName = ""
 						_ = config.SaveConfig(cfg)
 					}
@@ -117,6 +237,9 @@ var replCmd = &cobra.Command{
 				break
 			}
 			if strings.HasPrefix(lower, "set display ") {
+				if shouldRecordHistory(cfg.History.Mode, input, false) {
+					line.AppendHistory(input)
+				}
 				args := strings.Fields(lower)
 				if len(args) == 3 {
 					switch args[2] {
@@ -156,8 +279,166 @@ var replCmd = &cobra.Command{
 				continue
 			}
 
+			// Phase 3 P0 meta-commands (single-line)
+			if isMetaCommandStart(input) {
+				cmdName, args := parseMetaCommand(input)
+				cmdLower := strings.ToLower(cmdName)
+
+				switch {
+				case cmdLower == "\\conninfo" || cmdLower == "conninfo":
+					if shouldRecordHistory(cfg.History.Mode, input, false) {
+						line.AppendHistory(input)
+					}
+					fmt.Printf("Session name: %s\n", name)
+					fmt.Printf("Session id:   %s\n", entry.SessionId)
+					fmt.Printf("DB type:      %s\n", entry.DbType)
+					fmt.Printf("Remote host:  %s\n", entry.GetRemoteHost())
+					fmt.Printf("Backend:      %s\n", entry.ServerURL)
+					continue
+
+				case cmdLower == "desc" || cmdLower == "desc+" || cmdLower == "\\d" || cmdLower == "\\d+":
+					if shouldRecordHistory(cfg.History.Mode, input, false) {
+						line.AppendHistory(input)
+					}
+					if len(args) < 1 {
+						fmt.Println("Error: desc requires an object name")
+						continue
+					}
+					objName := trimTrailingSemicolon(args[0])
+					if objName == "" {
+						fmt.Println("Error: desc requires an object name")
+						continue
+					}
+					detail := "basic"
+					if cmdLower == "desc+" || cmdLower == "\\d+" {
+						detail = "full"
+					}
+					resp, err := c.MetaDescribe(entry.SessionId, objName, detail)
+					if err != nil {
+						fmt.Printf("%v\n", err)
+						continue
+					}
+					renderResponse(cmd, resp)
+					continue
+
+				case cmdLower == "\\dt" || cmdLower == "\\dv":
+					if shouldRecordHistory(cfg.History.Mode, input, false) {
+						line.AppendHistory(input)
+					}
+					kind := "table"
+					if cmdLower == "\\dv" {
+						kind = "view"
+					}
+					resp, err := c.MetaList(entry.SessionId, kind, "")
+					if err != nil {
+						fmt.Printf("%v\n", err)
+						continue
+					}
+					renderResponse(cmd, resp)
+					continue
+
+				case cmdLower == "\\i" || strings.HasPrefix(cmdName, "@"):
+					if shouldRecordHistory(cfg.History.Mode, input, false) {
+						line.AppendHistory(input)
+					}
+					fileArg := ""
+					if cmdLower == "\\i" {
+						if len(args) < 1 {
+							fmt.Println("Error: \\i requires a file path")
+							continue
+						}
+						fileArg = args[0]
+					} else {
+						fileArg = strings.TrimPrefix(cmdName, "@")
+						fileArg = strings.TrimSpace(fileArg)
+						if fileArg == "" {
+							fmt.Println("Error: @ requires a file path")
+							continue
+						}
+					}
+					fileArg = trimTrailingSemicolon(fileArg)
+					if fileArg == "" {
+						fmt.Println("Error: file path is required")
+						continue
+					}
+
+					content, err := readFileContent("", fileArg)
+					if err != nil {
+						fmt.Printf("%v\n", err)
+						continue
+					}
+					lines := strings.Split(content, "\n")
+					buf := make([]string, 0)
+					for _, l := range lines {
+						lineText := strings.TrimSpace(l)
+						if lineText == "" {
+							continue
+						}
+						buf = append(buf, lineText)
+						if strings.HasSuffix(lineText, ";") {
+							sql := strings.Join(buf, "\n")
+							sql = strings.TrimSuffix(sql, ";")
+							buf = nil
+
+							req := &client.ExecuteRequest{
+								SessionId: entry.SessionId,
+								Sql:       sql,
+								Options: client.ExecuteOptions{
+									Limit:          0,
+									FetchSize:      50,
+									QueryTimeoutMs: 0,
+								},
+							}
+							resp, err := c.Execute(req)
+							if err != nil {
+								fmt.Printf("%v\n", err)
+								continue
+							}
+							renderResponse(cmd, resp)
+						}
+					}
+					if len(buf) > 0 {
+						fmt.Println("Warning: trailing statement missing ';' was ignored")
+					}
+					continue
+
+				case cmdLower == "\\explain" || cmdLower == "explain":
+					if shouldRecordHistory(cfg.History.Mode, input, false) {
+						line.AppendHistory(input)
+					}
+					analyze := false
+					sql := ""
+					if len(args) > 0 {
+						sql = strings.Join(args, " ")
+					}
+					// Accept analyze form: "\\explain analyze <sql>" and alias "explain analyze <sql>"
+					if strings.HasPrefix(strings.ToLower(sql), "analyze ") {
+						analyze = true
+						sql = strings.TrimSpace(strings.TrimPrefix(strings.ToLower(sql), "analyze "))
+					}
+					// Accept alias form: "explain plan for <sql>"
+					if strings.HasPrefix(strings.ToLower(sql), "plan for ") {
+						sql = strings.TrimSpace(strings.TrimPrefix(strings.ToLower(sql), "plan for "))
+					}
+					sql = trimTrailingSemicolon(sql)
+					if strings.TrimSpace(sql) == "" {
+						fmt.Println("Error: explain requires a SQL statement")
+						continue
+					}
+					resp, err := c.MetaExplain(entry.SessionId, sql, analyze)
+					if err != nil {
+						fmt.Printf("%v\n", err)
+						continue
+					}
+					renderResponse(cmd, resp)
+					continue
+				}
+			}
+
 			if lower == "/context show" {
-				line.AppendHistory(input)
+				if shouldRecordHistory(cfg.History.Mode, input, false) {
+					line.AppendHistory(input)
+				}
 				ctxResp, err := c.AiContext(entry.SessionId, 10)
 				if err != nil {
 					fmt.Printf("%v\n", err)
@@ -189,7 +470,9 @@ var replCmd = &cobra.Command{
 			}
 
 			if lower == "/context clear" {
-				line.AppendHistory(input)
+				if shouldRecordHistory(cfg.History.Mode, input, false) {
+					line.AppendHistory(input)
+				}
 				if err := c.AiContextClear(entry.SessionId); err != nil {
 					fmt.Printf("%v\n", err)
 					continue
@@ -206,7 +489,9 @@ var replCmd = &cobra.Command{
 					continue
 				}
 
-				line.AppendHistory(input)
+				if shouldRecordHistory(cfg.History.Mode, input, false) {
+					line.AppendHistory(input)
+				}
 
 				aResp, err := c.AiGenerate(&client.AiGenerateRequest{
 					Prompt:       promptText,

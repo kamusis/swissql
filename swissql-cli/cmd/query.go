@@ -97,6 +97,12 @@ var queryCmd = &cobra.Command{
 func renderResponse(cmd *cobra.Command, resp *client.ExecuteResponse) {
 	if resp.Type == "tabular" {
 		table := tablewriter.NewWriter(os.Stdout)
+		// Preserve column names exactly as returned by the backend (e.g. TABLE_NAME).
+		table.Options(tablewriter.WithConfig(tablewriter.Config{
+			Header: tw.CellConfig{
+				Formatting: tw.CellFormatting{AutoFormat: tw.Off},
+			},
+		}))
 
 		// Check for --plain flag
 		plain, _ := cmd.Flags().GetBool("plain")
@@ -115,15 +121,22 @@ func renderResponse(cmd *cobra.Command, resp *client.ExecuteResponse) {
 			values := make([]any, len(resp.Data.Columns))
 			for i, col := range resp.Data.Columns {
 				cell := fmt.Sprintf("%v", row[col.Name])
-				cell = strings.ReplaceAll(cell, "\r\n", " ")
-				cell = strings.ReplaceAll(cell, "\n", " ")
-				cell = strings.ReplaceAll(cell, "\t", " ")
-				if !displayWide {
-					maxWidth := displayMaxColWidth
-					if col.Name == "query" || col.Name == "QUERY" {
-						maxWidth = displayMaxQueryWidth
+				isPlanTableOutput := strings.EqualFold(col.Name, "PLAN_TABLE_OUTPUT")
+				isQueryPlan := strings.EqualFold(col.Name, "QUERY PLAN") || strings.EqualFold(col.Name, "QUERY_PLAN")
+				if isPlanTableOutput || isQueryPlan {
+					cell = strings.ReplaceAll(cell, "\r\n", "\n")
+					cell = strings.ReplaceAll(cell, "\t", " ")
+				} else {
+					cell = strings.ReplaceAll(cell, "\r\n", " ")
+					cell = strings.ReplaceAll(cell, "\n", " ")
+					cell = strings.ReplaceAll(cell, "\t", " ")
+					if !displayWide {
+						maxWidth := displayMaxColWidth
+						if col.Name == "query" || col.Name == "QUERY" {
+							maxWidth = displayMaxQueryWidth
+						}
+						cell = truncateWithEllipsisCell(cell, maxWidth)
 					}
-					cell = truncateWithEllipsisCell(cell, maxWidth)
 				}
 				values[i] = cell
 			}

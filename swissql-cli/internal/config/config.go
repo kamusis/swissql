@@ -9,10 +9,22 @@ import (
 type Config struct {
 	CurrentName string `json:"current_name"`
 	DisplayWide bool   `json:"display_wide"`
-	Display     struct {
+	History     struct {
+		Mode string `json:"mode"`
+	} `json:"history"`
+	Display struct {
 		MaxColWidth   int `json:"max_col_width"`
 		MaxQueryWidth int `json:"max_query_width"`
 	} `json:"display"`
+}
+
+func normalizeHistoryMode(mode string) string {
+	switch mode {
+	case "sql_only", "safe_only", "all":
+		return mode
+	default:
+		return "safe_only"
+	}
 }
 
 func GetConfigDir() (string, error) {
@@ -54,6 +66,7 @@ func LoadConfig() (*Config, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		cfg := &Config{}
 		cfg.DisplayWide = false
+		cfg.History.Mode = "safe_only"
 		cfg.Display.MaxColWidth = 32
 		cfg.Display.MaxQueryWidth = 60
 		return cfg, nil
@@ -70,6 +83,7 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// Defaults for newly introduced fields
+	cfg.History.Mode = normalizeHistoryMode(cfg.History.Mode)
 	if cfg.Display.MaxColWidth == 0 {
 		cfg.Display.MaxColWidth = 32
 	}

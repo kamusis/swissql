@@ -38,16 +38,8 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 }
 
 func (c *Client) Status() error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.Timeout)
-	defer cancel()
-
 	url := fmt.Sprintf("%s/v1/status", c.BaseURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := c.getWithTimeout(url)
 	if err != nil {
 		return err
 	}
@@ -93,6 +85,12 @@ type ExecuteResponse struct {
 	Type     string           `json:"type"`
 	Data     DataContent      `json:"data"`
 	Metadata ResponseMetadata `json:"metadata"`
+}
+
+type MetaExplainRequest struct {
+	SessionId string `json:"session_id"`
+	Sql       string `json:"sql"`
+	Analyze   bool   `json:"analyze"`
 }
 
 type DataContent struct {
@@ -208,12 +206,71 @@ func (c *Client) ValidateSession(sessionId string) error {
 	q.Set("session_id", sessionId)
 	urlStr := fmt.Sprintf("%s/v1/sessions/validate?%s", c.BaseURL, q.Encode())
 
-	body, err := c.get(urlStr)
+	body, err := c.getProbe(urlStr)
 	if err != nil {
 		return err
 	}
 	defer body.Close()
 	return nil
+}
+
+func (c *Client) MetaDescribe(sessionId string, name string, detail string) (*ExecuteResponse, error) {
+	q := url.Values{}
+	q.Set("session_id", sessionId)
+	q.Set("name", name)
+	if strings.TrimSpace(detail) != "" {
+		q.Set("detail", detail)
+	}
+	urlStr := fmt.Sprintf("%s/v1/meta/describe?%s", c.BaseURL, q.Encode())
+
+	body, err := c.get(urlStr)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp ExecuteResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) MetaList(sessionId string, kind string, schema string) (*ExecuteResponse, error) {
+	q := url.Values{}
+	q.Set("session_id", sessionId)
+	q.Set("kind", kind)
+	if strings.TrimSpace(schema) != "" {
+		q.Set("schema", schema)
+	}
+	urlStr := fmt.Sprintf("%s/v1/meta/list?%s", c.BaseURL, q.Encode())
+
+	body, err := c.get(urlStr)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp ExecuteResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) MetaExplain(sessionId string, sql string, analyze bool) (*ExecuteResponse, error) {
+	urlStr := fmt.Sprintf("%s/v1/meta/explain", c.BaseURL)
+	body, err := c.post(urlStr, &MetaExplainRequest{SessionId: sessionId, Sql: sql, Analyze: analyze})
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp ExecuteResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 func (c *Client) Connect(req *ConnectRequest) (*ConnectResponse, error) {
@@ -349,11 +406,51 @@ func (c *Client) post(url string, body interface{}) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
-func (c *Client) get(urlStr string) (io.ReadCloser, error) {
+func (c *Client) getWithTimeout(urlStr string) (*http.Response, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.Timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.HTTPClient.Do(req)
+}
+
+func (c *Client) getProbe(urlStr string) (io.ReadCloser, error) {
+	resp, err := c.getWithTimeout(urlStr)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		var errResp ErrorResponse
+		json.NewDecoder(resp.Body).Decode(&errResp)
+		resp.Body.Close()
+		if errResp.Code != "" {
+			kind := ApiErrorKindAPI
+			msg := errResp.Message
+			if errResp.Code == "EXECUTION_ERROR" {
+				kind = ApiErrorKindDB
+				msg = sanitizeDbErrorMessage(msg)
+			}
+			return nil, &ApiError{
+				Kind:    kind,
+				Status:  resp.StatusCode,
+				Code:    errResp.Code,
+				Message: msg,
+				TraceId: errResp.TraceId,
+			}
+		}
+		return nil, &ApiError{Kind: ApiErrorKindAPI, Status: resp.StatusCode, Message: fmt.Sprintf("status=%d", resp.StatusCode)}
+	}
+
+	return resp.Body, nil
+}
+
+func (c *Client) get(urlStr string) (io.ReadCloser, error) {
+	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
 	if err != nil {
 		return nil, err
 	}

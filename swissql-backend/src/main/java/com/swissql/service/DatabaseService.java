@@ -26,6 +26,140 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DatabaseService {
     private final Map<String, HikariDataSource> dataSources = new ConcurrentHashMap<>();
 
+    public ExecuteResponse metaDescribe(SessionInfo session, String name, String detail) throws SQLException {
+        String dbType = session.getDbType() != null ? session.getDbType().toLowerCase() : "";
+        String resolvedDetail = detail != null && !detail.isBlank() ? detail.toLowerCase() : "basic";
+
+        ParsedObjectName parsed = ParsedObjectName.parse(name);
+        String resolvedSchema = parsed.schema != null && !parsed.schema.isBlank() ? parsed.schema : getDefaultSchema(session);
+
+        if ("oracle".equals(dbType)) {
+            String sql;
+            if ("full".equals(resolvedDetail)) {
+                sql = "SELECT c.COLUMN_NAME AS NAME, c.DATA_TYPE AS TYPE, c.NULLABLE, c.DATA_DEFAULT, "
+                        + "cc.COMMENTS AS COLUMN_COMMENT, "
+                        + "(SELECT LISTAGG(ac.CONSTRAINT_TYPE || ':' || ac.CONSTRAINT_NAME, ', ') WITHIN GROUP (ORDER BY ac.CONSTRAINT_TYPE, ac.CONSTRAINT_NAME) "
+                        + "   FROM ALL_CONS_COLUMNS acc "
+                        + "   JOIN ALL_CONSTRAINTS ac ON ac.OWNER = acc.OWNER AND ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME "
+                        + "  WHERE acc.OWNER = c.OWNER AND acc.TABLE_NAME = c.TABLE_NAME AND acc.COLUMN_NAME = c.COLUMN_NAME "
+                        + ") AS COLUMN_CONSTRAINTS, "
+                        + "(SELECT LISTAGG(aic.INDEX_NAME, ', ') WITHIN GROUP (ORDER BY aic.INDEX_NAME) "
+                        + "   FROM ALL_IND_COLUMNS aic "
+                        + "  WHERE aic.INDEX_OWNER = c.OWNER AND aic.TABLE_NAME = c.TABLE_NAME AND aic.COLUMN_NAME = c.COLUMN_NAME "
+                        + ") AS COLUMN_INDEXES "
+                        + "FROM ALL_TAB_COLUMNS c "
+                        + "LEFT JOIN ALL_COL_COMMENTS cc ON cc.OWNER = c.OWNER AND cc.TABLE_NAME = c.TABLE_NAME AND cc.COLUMN_NAME = c.COLUMN_NAME "
+                        + "WHERE c.OWNER = ? AND c.TABLE_NAME = ? "
+                        + "ORDER BY c.COLUMN_ID";
+            } else {
+                sql = "SELECT COLUMN_NAME AS NAME, DATA_TYPE AS TYPE, NULLABLE, DATA_DEFAULT "
+                        + "FROM ALL_TAB_COLUMNS "
+                        + "WHERE OWNER = ? AND TABLE_NAME = ? "
+                        + "ORDER BY COLUMN_ID";
+            }
+
+            ExecuteResponse resp = queryTabular(session, sql, List.of(resolvedSchema.toUpperCase(), parsed.object.toUpperCase()), 0);
+            if (resp != null && resp.getData() != null && resp.getData().getRows() != null && resp.getData().getRows().isEmpty()) {
+                ParsedObjectName resolved = resolveOracleSynonym(session, resolvedSchema, parsed.object);
+                if (resolved != null && resolved.schema != null && !resolved.schema.isBlank()) {
+                    return queryTabular(session, sql, List.of(resolved.schema.toUpperCase(), resolved.object.toUpperCase()), 0);
+                }
+            }
+            return resp;
+        }
+
+        if ("postgres".equals(dbType) || "postgresql".equals(dbType)) {
+            String sql;
+            if ("full".equals(resolvedDetail)) {
+                sql = "SELECT c.column_name AS name, c.data_type AS type, c.is_nullable AS nullable, c.column_default AS data_default, "
+                        + "pgd.description AS comment, "
+                        + "(SELECT string_agg(tc.constraint_type || ':' || tc.constraint_name, ', ' ORDER BY tc.constraint_type, tc.constraint_name) "
+                        + "   FROM information_schema.key_column_usage kcu "
+                        + "   JOIN information_schema.table_constraints tc "
+                        + "     ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema AND tc.table_name = kcu.table_name "
+                        + "  WHERE kcu.table_schema = c.table_schema AND kcu.table_name = c.table_name AND kcu.column_name = c.column_name "
+                        + ") AS constraints, "
+                        + "(SELECT string_agg(ic.relname, ', ' ORDER BY ic.relname) "
+                        + "   FROM pg_catalog.pg_class tc "
+                        + "   JOIN pg_catalog.pg_namespace tn ON tn.oid = tc.relnamespace "
+                        + "   JOIN pg_catalog.pg_index ix ON ix.indrelid = tc.oid "
+                        + "   JOIN pg_catalog.pg_class ic ON ic.oid = ix.indexrelid "
+                        + "   JOIN pg_catalog.pg_attribute ia ON ia.attrelid = tc.oid "
+                        + "  WHERE tn.nspname = c.table_schema "
+                        + "    AND tc.relname = c.table_name "
+                        + "    AND ia.attname = c.column_name "
+                        + "    AND ia.attnum = ANY(ix.indkey::smallint[]) "
+                        + ") AS indexes "
+                        + "FROM information_schema.columns c "
+                        + "LEFT JOIN pg_catalog.pg_namespace pgn ON pgn.nspname = c.table_schema "
+                        + "LEFT JOIN pg_catalog.pg_class pgc ON pgc.relname = c.table_name AND pgc.relnamespace = pgn.oid "
+                        + "LEFT JOIN pg_catalog.pg_attribute pga ON pga.attrelid = pgc.oid AND pga.attname = c.column_name "
+                        + "LEFT JOIN pg_catalog.pg_description pgd ON pgd.objoid = pgc.oid AND pgd.objsubid = pga.attnum "
+                        + "WHERE c.table_schema = ? AND c.table_name = ? "
+                        + "ORDER BY c.ordinal_position";
+            } else {
+                sql = "SELECT column_name AS name, data_type AS type, is_nullable AS nullable, column_default AS data_default "
+                        + "FROM information_schema.columns "
+                        + "WHERE table_schema = ? AND table_name = ? "
+                        + "ORDER BY ordinal_position";
+            }
+            return queryTabular(session, sql, List.of(resolvedSchema.toLowerCase(), parsed.object.toLowerCase()), 0);
+        }
+
+        throw new SQLException("Unsupported database type: " + dbType);
+    }
+
+    public ExecuteResponse metaList(SessionInfo session, String kind, String schema) throws SQLException {
+        String dbType = session.getDbType() != null ? session.getDbType().toLowerCase() : "";
+        String resolvedKind = kind != null && !kind.isBlank() ? kind.toLowerCase() : "table";
+        String resolvedSchema = (schema != null && !schema.isBlank()) ? schema : getDefaultSchema(session);
+
+        if ("oracle".equals(dbType)) {
+            String sql;
+            if ("view".equals(resolvedKind)) {
+                sql = "SELECT OWNER AS SCHEMA, VIEW_NAME AS NAME, 'VIEW' AS KIND FROM ALL_VIEWS WHERE OWNER = ? ORDER BY VIEW_NAME";
+            } else {
+                sql = "SELECT OWNER AS SCHEMA, TABLE_NAME AS NAME, 'TABLE' AS KIND FROM ALL_TABLES WHERE OWNER = ? ORDER BY TABLE_NAME";
+            }
+            return queryTabular(session, sql, List.of(resolvedSchema.toUpperCase()), 0);
+        }
+
+        if ("postgres".equals(dbType) || "postgresql".equals(dbType)) {
+            String tableType = "table".equals(resolvedKind) ? "BASE TABLE" : "VIEW";
+            String sql = "SELECT table_schema AS schema, table_name AS name, table_type AS kind "
+                    + "FROM information_schema.tables "
+                    + "WHERE table_schema = ? AND table_type = ? "
+                    + "ORDER BY table_name";
+            return queryTabular(session, sql, List.of(resolvedSchema.toLowerCase(), tableType), 0);
+        }
+
+        throw new SQLException("Unsupported database type: " + dbType);
+    }
+
+    public ExecuteResponse metaExplain(SessionInfo session, String sql) throws SQLException {
+        return metaExplain(session, sql, false);
+    }
+
+    public ExecuteResponse metaExplain(SessionInfo session, String sql, boolean analyze) throws SQLException {
+        String dbType = session.getDbType() != null ? session.getDbType().toLowerCase() : "";
+
+        if ("oracle".equals(dbType)) {
+            if (analyze) {
+                return explainOracleAnalyze(session, sql);
+            }
+            return explainOracle(session, sql);
+        }
+
+        if ("postgres".equals(dbType) || "postgresql".equals(dbType)) {
+            if (analyze) {
+                return queryTabular(session, "EXPLAIN (ANALYZE, FORMAT TEXT) " + sql, List.of(), 0);
+            }
+            return queryTabular(session, "EXPLAIN (FORMAT TEXT) " + sql, List.of(), 0);
+        }
+
+        throw new SQLException("Unsupported database type: " + dbType);
+    }
+
     public void initializeSession(SessionInfo session) throws SQLException {
         String sessionId = session.getSessionId();
         if (sessionId == null || sessionId.isBlank()) {
@@ -52,6 +186,49 @@ public class DatabaseService {
         } catch (SQLException e) {
             ds.close();
             throw e;
+        }
+    }
+
+    private ExecuteResponse explainOracleAnalyze(SessionInfo session, String sql) throws SQLException {
+        DataSource ds = getDataSource(session);
+        long startTime = System.currentTimeMillis();
+
+        try (Connection conn = ds.getConnection()) {
+            if (session.getOptions().isReadOnly()) {
+                conn.setReadOnly(true);
+            }
+
+            try (Statement stmt = conn.createStatement()) {
+                try {
+                    stmt.execute("ALTER SESSION SET statistics_level=ALL");
+                } catch (SQLException ignored) {
+                    // Best-effort. Some environments may restrict this.
+                }
+
+                boolean hasResultSet = stmt.execute(sql);
+                if (hasResultSet) {
+                    try (ResultSet rs = stmt.getResultSet()) {
+                        while (rs != null && rs.next()) {
+                            // Consume result set to ensure runtime stats are collected.
+                        }
+                    }
+                }
+            }
+
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY_CURSOR(NULL, NULL, 'ALLSTATS LAST'))")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    long duration = System.currentTimeMillis() - startTime;
+                    ExecuteResponse response = new ExecuteResponse();
+                    ExecuteResponse.Metadata metadata = new ExecuteResponse.Metadata();
+                    metadata.setDurationMs(duration);
+                    response.setMetadata(metadata);
+                    response.setType("tabular");
+                    processResultSet(rs, response, 0);
+                    response.setMetadata(metadata);
+                    return response;
+                }
+            }
         }
     }
 
@@ -188,6 +365,154 @@ public class DatabaseService {
             config.setIdleTimeout(60000);
             return new HikariDataSource(config);
         });
+    }
+
+    private ExecuteResponse queryTabular(SessionInfo session, String sql, List<Object> params, int limit) throws SQLException {
+        DataSource ds = getDataSource(session);
+        long startTime = System.currentTimeMillis();
+
+        try (Connection conn = ds.getConnection()) {
+            if (session.getOptions().isReadOnly()) {
+                conn.setReadOnly(true);
+            }
+
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                for (int i = 0; i < params.size(); i++) {
+                    stmt.setObject(i + 1, params.get(i));
+                }
+
+                try (ResultSet rs = stmt.executeQuery()) {
+                    long duration = System.currentTimeMillis() - startTime;
+                    ExecuteResponse response = new ExecuteResponse();
+                    ExecuteResponse.Metadata metadata = new ExecuteResponse.Metadata();
+                    metadata.setDurationMs(duration);
+                    response.setMetadata(metadata);
+                    response.setType("tabular");
+                    processResultSet(rs, response, limit);
+                    response.setMetadata(metadata);
+                    return response;
+                }
+            }
+        }
+    }
+
+    private ExecuteResponse explainOracle(SessionInfo session, String sql) throws SQLException {
+        DataSource ds = getDataSource(session);
+        long startTime = System.currentTimeMillis();
+
+        try (Connection conn = ds.getConnection()) {
+            if (session.getOptions().isReadOnly()) {
+                conn.setReadOnly(true);
+            }
+
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("EXPLAIN PLAN FOR " + sql);
+            }
+
+            try (PreparedStatement ps = conn.prepareStatement("SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY())")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    long duration = System.currentTimeMillis() - startTime;
+                    ExecuteResponse response = new ExecuteResponse();
+                    ExecuteResponse.Metadata metadata = new ExecuteResponse.Metadata();
+                    metadata.setDurationMs(duration);
+                    response.setMetadata(metadata);
+                    response.setType("tabular");
+                    processResultSet(rs, response, 0);
+                    response.setMetadata(metadata);
+                    return response;
+                }
+            }
+        }
+    }
+
+    private String getDefaultSchema(SessionInfo session) {
+        try {
+            DataSource ds = getDataSource(session);
+            try (Connection conn = ds.getConnection()) {
+                String dbType = session.getDbType() != null ? session.getDbType().toLowerCase() : "";
+
+                if ("postgres".equals(dbType) || "postgresql".equals(dbType)) {
+                    try (Statement st = conn.createStatement()) {
+                        try (ResultSet rs = st.executeQuery("SELECT current_schema()")) {
+                            if (rs.next()) {
+                                String schema = rs.getString(1);
+                                if (schema != null) {
+                                    return schema;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                String username = conn.getMetaData().getUserName();
+                if (username == null) {
+                    return "";
+                }
+                return username;
+            }
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private ParsedObjectName resolveOracleSynonym(SessionInfo session, String schema, String objectName) {
+        if (objectName == null || objectName.isBlank()) {
+            return null;
+        }
+        String resolvedSchema = schema != null && !schema.isBlank() ? schema : getDefaultSchema(session);
+
+        // Prefer schema synonym, then PUBLIC synonym
+        String sql = "SELECT TABLE_OWNER, TABLE_NAME "
+                + "FROM ALL_SYNONYMS "
+                + "WHERE SYNONYM_NAME = ? AND (OWNER = ? OR OWNER = 'PUBLIC') "
+                + "ORDER BY CASE WHEN OWNER = ? THEN 0 ELSE 1 END";
+
+        try {
+            DataSource ds = getDataSource(session);
+            try (Connection conn = ds.getConnection()) {
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    ps.setString(1, objectName.toUpperCase());
+                    ps.setString(2, resolvedSchema.toUpperCase());
+                    ps.setString(3, resolvedSchema.toUpperCase());
+
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            String owner = rs.getString(1);
+                            String table = rs.getString(2);
+                            if (owner != null && table != null) {
+                                return new ParsedObjectName(owner, table);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static class ParsedObjectName {
+        private final String schema;
+        private final String object;
+
+        private ParsedObjectName(String schema, String object) {
+            this.schema = schema;
+            this.object = object;
+        }
+
+        private static ParsedObjectName parse(String name) {
+            if (name == null) {
+                return new ParsedObjectName("", "");
+            }
+            String trimmed = name.trim();
+            int dot = trimmed.indexOf('.');
+            if (dot > 0 && dot < trimmed.length() - 1) {
+                return new ParsedObjectName(trimmed.substring(0, dot), trimmed.substring(dot + 1));
+            }
+            return new ParsedObjectName("", trimmed);
+        }
     }
 
     private HikariConfig buildHikariConfig(SessionInfo session, String poolName, int maximumPoolSize, int minimumIdle) {
