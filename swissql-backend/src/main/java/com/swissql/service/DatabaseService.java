@@ -691,4 +691,159 @@ public class DatabaseService {
             ds.close();
         }
     }
+
+    public ExecuteResponse metaCompletions(SessionInfo session, String kind, String schema, String table, String prefix) throws SQLException {
+        String dbType = session.getDbType() != null ? session.getDbType().toLowerCase() : "";
+        String resolvedKind = kind != null && !kind.isBlank() ? kind.toLowerCase() : "tables";
+        String resolvedSchema = schema != null && !schema.isBlank() ? schema : getDefaultSchema(session);
+        String resolvedTable = table != null && !table.isBlank() ? table : "";
+        String resolvedPrefix = prefix != null && !prefix.isBlank() ? prefix : "";
+
+        ExecuteResponse response = new ExecuteResponse();
+        response.setType("tabular");
+
+        ExecuteResponse.DataContent data = new ExecuteResponse.DataContent();
+        data.setColumns(List.of(buildColumn("name", "VARCHAR")));
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+
+        DataSource ds = getDataSource(session);
+        try (Connection conn = ds.getConnection()) {
+            String sql;
+            if ("oracle".equals(dbType)) {
+                sql = buildOracleCompletionSql(resolvedKind, resolvedSchema, resolvedTable, resolvedPrefix);
+            } else if ("postgres".equals(dbType) || "postgresql".equals(dbType)) {
+                sql = buildPostgresCompletionSql(resolvedKind, resolvedSchema, resolvedTable, resolvedPrefix);
+            } else {
+                response.setData(data);
+                response.setMetadata(new ExecuteResponse.Metadata());
+                return response;
+            }
+
+            if (sql != null && !sql.isBlank()) {
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    int paramIndex = 1;
+                    if (!resolvedSchema.isBlank()) {
+                        ps.setString(paramIndex++, resolvedSchema.toUpperCase());
+                    }
+                    if (!resolvedTable.isBlank()) {
+                        ps.setString(paramIndex++, resolvedTable.toUpperCase());
+                    }
+                    if (!resolvedPrefix.isBlank()) {
+                        ps.setString(paramIndex++, resolvedPrefix.toUpperCase() + "%");
+                    }
+
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            String name = rs.getString(1);
+                            if (name != null) {
+                                Map<String, Object> row = new HashMap<>();
+                                row.put("name", name);
+                                rows.add(row);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        data.setRows(rows);
+        response.setData(data);
+
+        ExecuteResponse.Metadata metadata = new ExecuteResponse.Metadata();
+        metadata.setRowsAffected(rows.size());
+        metadata.setTruncated(false);
+        metadata.setDurationMs(0);
+        response.setMetadata(metadata);
+
+        return response;
+    }
+
+    private String buildOracleCompletionSql(String kind, String schema, String table, String prefix) {
+        switch (kind) {
+            case "tables":
+                if (!schema.isBlank()) {
+                    return !prefix.isBlank()
+                            ? "SELECT table_name AS name FROM all_tables WHERE owner = ? AND UPPER(table_name) LIKE ? ORDER BY table_name"
+                            : "SELECT table_name AS name FROM all_tables WHERE owner = ? ORDER BY table_name";
+                } else {
+                    return !prefix.isBlank()
+                            ? "SELECT table_name AS name FROM user_tables WHERE UPPER(table_name) LIKE ? ORDER BY table_name"
+                            : "SELECT table_name AS name FROM user_tables ORDER BY table_name";
+                }
+            case "views":
+                if (!schema.isBlank()) {
+                    return !prefix.isBlank()
+                            ? "SELECT view_name AS name FROM all_views WHERE owner = ? AND UPPER(view_name) LIKE ? ORDER BY view_name"
+                            : "SELECT view_name AS name FROM all_views WHERE owner = ? ORDER BY view_name";
+                } else {
+                    return !prefix.isBlank()
+                            ? "SELECT view_name AS name FROM user_views WHERE UPPER(view_name) LIKE ? ORDER BY view_name"
+                            : "SELECT view_name AS name FROM user_views ORDER BY view_name";
+                }
+            case "schemas":
+                return !prefix.isBlank()
+                        ? "SELECT username AS name FROM all_users WHERE UPPER(username) LIKE ? ORDER BY username"
+                        : "SELECT username AS name FROM all_users ORDER BY username";
+            case "columns":
+                if (!table.isBlank()) {
+                    if (!schema.isBlank()) {
+                        return !prefix.isBlank()
+                                ? "SELECT column_name AS name FROM all_tab_columns WHERE owner = ? AND table_name = ? AND UPPER(column_name) LIKE ? ORDER BY column_id"
+                                : "SELECT column_name AS name FROM all_tab_columns WHERE owner = ? AND table_name = ? ORDER BY column_id";
+                    } else {
+                        return !prefix.isBlank()
+                                ? "SELECT column_name AS name FROM user_tab_columns WHERE table_name = ? AND UPPER(column_name) LIKE ? ORDER BY column_id"
+                                : "SELECT column_name AS name FROM user_tab_columns WHERE table_name = ? ORDER BY column_id";
+                    }
+                }
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    private String buildPostgresCompletionSql(String kind, String schema, String table, String prefix) {
+        switch (kind) {
+            case "tables":
+                if (!schema.isBlank()) {
+                    return !prefix.isBlank()
+                            ? "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = ? AND table_type = 'BASE TABLE' AND table_name ILIKE ? ORDER BY table_name"
+                            : "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = ? AND table_type = 'BASE TABLE' ORDER BY table_name";
+                } else {
+                    return !prefix.isBlank()
+                            ? "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' AND table_name ILIKE ? ORDER BY table_name"
+                            : "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' ORDER BY table_name";
+                }
+            case "views":
+                if (!schema.isBlank()) {
+                    return !prefix.isBlank()
+                            ? "SELECT table_name AS name FROM information_schema.views WHERE table_schema = ? AND table_name ILIKE ? ORDER BY table_name"
+                            : "SELECT table_name AS name FROM information_schema.views WHERE table_schema = ? ORDER BY table_name";
+                } else {
+                    return !prefix.isBlank()
+                            ? "SELECT table_name AS name FROM information_schema.views WHERE table_schema = current_schema() AND table_name ILIKE ? ORDER BY table_name"
+                            : "SELECT table_name AS name FROM information_schema.views WHERE table_schema = current_schema() ORDER BY table_name";
+                }
+            case "schemas":
+                return !prefix.isBlank()
+                        ? "SELECT schema_name AS name FROM information_schema.schemata WHERE schema_name ILIKE ? ORDER BY schema_name"
+                        : "SELECT schema_name AS name FROM information_schema.schemata ORDER BY schema_name";
+            case "columns":
+                if (!table.isBlank()) {
+                    if (!schema.isBlank()) {
+                        return !prefix.isBlank()
+                                ? "SELECT column_name AS name FROM information_schema.columns WHERE table_schema = ? AND table_name = ? AND column_name ILIKE ? ORDER BY ordinal_position"
+                                : "SELECT column_name AS name FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position";
+                    } else {
+                        return !prefix.isBlank()
+                                ? "SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? AND column_name ILIKE ? ORDER BY ordinal_position"
+                                : "SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? ORDER BY ordinal_position";
+                    }
+                }
+                return null;
+            default:
+                return null;
+        }
+    }
 }

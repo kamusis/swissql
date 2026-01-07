@@ -291,6 +291,34 @@ func (c *Client) MetaExplain(sessionId string, sql string, analyze bool) (*Execu
 	return &resp, nil
 }
 
+func (c *Client) MetaCompletions(sessionId string, kind string, schema string, table string, prefix string) (*ExecuteResponse, error) {
+	q := url.Values{}
+	q.Set("session_id", sessionId)
+	q.Set("kind", kind)
+	if strings.TrimSpace(schema) != "" {
+		q.Set("schema", schema)
+	}
+	if strings.TrimSpace(table) != "" {
+		q.Set("table", table)
+	}
+	if strings.TrimSpace(prefix) != "" {
+		q.Set("prefix", prefix)
+	}
+	urlStr := fmt.Sprintf("%s/v1/meta/completions?%s", c.BaseURL, q.Encode())
+
+	body, err := c.get(urlStr)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp ExecuteResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) Connect(req *ConnectRequest) (*ConnectResponse, error) {
 	url := fmt.Sprintf("%s/v1/connect", c.BaseURL)
 	respBody, err := c.post(url, req)

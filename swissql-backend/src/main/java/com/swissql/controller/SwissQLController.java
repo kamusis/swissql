@@ -332,6 +332,35 @@ public class SwissQLController {
         return cmd + " " + resolvedSql;
     }
 
+    @GetMapping("/meta/completions")
+    public ResponseEntity<?> metaCompletions(
+            @RequestParam("session_id") String sessionId,
+            @RequestParam("kind") String kind,
+            @RequestParam(value = "schema", required = false) String schema,
+            @RequestParam(value = "table", required = false) String table,
+            @RequestParam(value = "prefix", required = false) String prefix
+    ) {
+        var sessionInfoOpt = sessionManager.getSession(sessionId);
+        if (sessionInfoOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(ErrorResponse.builder()
+                    .code("SESSION_EXPIRED")
+                    .message("Session missing or expired")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        try {
+            ExecuteResponse response = databaseService.metaCompletions(sessionInfoOpt.get(), kind, schema, table, prefix);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(ErrorResponse.builder()
+                    .code("EXECUTION_ERROR")
+                    .message(e.getMessage())
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+    }
+
     /**
      * Retrieve recent executed SQL context that may be included in AI prompts.
      *
