@@ -1,6 +1,12 @@
 name: Release Backend Docker Image
 
 "on":
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Image version tag (e.g. 0.0.0-test)"
+        required: true
+        type: string
   push:
     tags:
       - "backend/v*"
@@ -36,8 +42,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#backend/}"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#backend/}"
+          fi
+
+          if [[ -z "${VERSION}" ]]; then
+            echo "version is required" >&2
+            exit 1
+          fi
+
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Docker metadata
@@ -48,7 +65,7 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/swissql-backend
           tags: |
             type=raw,value=${{ steps.vars.outputs.version }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
