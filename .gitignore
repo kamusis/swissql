@@ -53,3 +53,6 @@ Thumbs.db
 # Desgin docs
 /design/
 
+# JDBC drivers
+*.jar
+

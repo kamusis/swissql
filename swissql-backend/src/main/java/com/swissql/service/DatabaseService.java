@@ -2,8 +2,11 @@ package com.swissql.service;
 
 import com.swissql.api.ExecuteRequest;
 import com.swissql.api.ExecuteResponse;
+import com.swissql.driver.DriverManifest;
+import com.swissql.driver.DriverRegistry;
 import com.swissql.model.SessionInfo;
 import com.swissql.util.DsnParser;
+import com.swissql.util.JdbcConnectionInfoResolver;
 import com.swissql.util.JdbcConnectionInfo;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -28,6 +31,20 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class DatabaseService {
     private final Map<String, HikariDataSource> dataSources = new ConcurrentHashMap<>();
+
+    private final JdbcConnectionInfoResolver jdbcConnectionInfoResolver;
+    private final DriverRegistry driverRegistry;
+
+    /**
+     * Create a database service.
+     *
+     * @param jdbcConnectionInfoResolver resolver for DSN to JDBC connection info
+     * @param driverRegistry driver registry
+     */
+    public DatabaseService(JdbcConnectionInfoResolver jdbcConnectionInfoResolver, DriverRegistry driverRegistry) {
+        this.jdbcConnectionInfoResolver = jdbcConnectionInfoResolver;
+        this.driverRegistry = driverRegistry;
+    }
 
     private static final int MAX_LOB_CHARS = 100_000;
     private static final int MAX_BLOB_BYTES = 100_000;
@@ -189,7 +206,7 @@ public class DatabaseService {
             return queryTabular(session, sql, List.of(resolvedSchema.toLowerCase(), parsed.object.toLowerCase()), 0);
         }
 
-        throw new SQLException("Unsupported database type: " + dbType);
+        return buildUnsupportedMetaResponse("meta/describe", dbType);
     }
 
     private ExecuteResponse.ColumnDefinition buildColumn(String name, String type) {
@@ -261,7 +278,7 @@ public class DatabaseService {
             return queryTabular(session, sql, List.of(resolvedSchema.toLowerCase(), tableType), 0);
         }
 
-        throw new SQLException("Unsupported database type: " + dbType);
+        return buildUnsupportedMetaResponse("meta/list", dbType);
     }
 
     public ExecuteResponse metaExplain(SessionInfo session, String sql) throws SQLException {
@@ -285,7 +302,31 @@ public class DatabaseService {
             return queryTabular(session, "EXPLAIN (FORMAT TEXT) " + sql, List.of(), 0);
         }
 
-        throw new SQLException("Unsupported database type: " + dbType);
+        return buildUnsupportedMetaResponse("meta/explain", dbType);
+    }
+
+    /**
+     * Build a stable response for unsupported meta commands on a dbType.
+     *
+     * @param command meta command
+     * @param dbType dbType
+     * @return execute response
+     */
+    private ExecuteResponse buildUnsupportedMetaResponse(String command, String dbType) {
+        ExecuteResponse response = new ExecuteResponse();
+        response.setType("text");
+
+        ExecuteResponse.DataContent data = new ExecuteResponse.DataContent();
+        data.setTextContent("Unsupported meta command: " + command + " for dbType: " + dbType);
+        response.setData(data);
+
+        ExecuteResponse.Metadata metadata = new ExecuteResponse.Metadata();
+        metadata.setRowsAffected(0);
+        metadata.setTruncated(false);
+        metadata.setDurationMs(0);
+        response.setMetadata(metadata);
+
+        return response;
     }
 
     public void initializeSession(SessionInfo session) throws SQLException {
@@ -362,7 +403,7 @@ public class DatabaseService {
 
     public void testConnection(SessionInfo session) throws SQLException {
         String dsn = session.getDsn();
-        JdbcConnectionInfo info = DsnParser.parse(dsn, session.getDbType());
+        JdbcConnectionInfo info = jdbcConnectionInfoResolver.resolve(dsn, session.getDbType());
         log.info("Testing connection for DSN: {} (Type: {})", maskDsn(dsn), info.getDbType());
 
         HikariConfig config = buildHikariConfig(session, "Test-Connection-" + System.currentTimeMillis(), 1, 0);
@@ -787,7 +828,7 @@ public class DatabaseService {
         String query = extractQuery(dsn);
         Map<String, String> queryParams = DsnParser.parseQuery(query);
 
-        JdbcConnectionInfo info = DsnParser.parse(dsn, session.getDbType());
+        JdbcConnectionInfo info = jdbcConnectionInfoResolver.resolve(dsn, session.getDbType());
         HikariConfig config = new HikariConfig();
         config.setJdbcUrl(info.getUrl());
         config.setUsername(info.getUsername());
@@ -817,6 +858,16 @@ public class DatabaseService {
             // Ensure pg_stat_activity.application_name is set.
             // For PostgreSQL JDBC, ApplicationName is mapped to the startup parameter application_name.
             config.addDataSourceProperty("ApplicationName", "swissql");
+        } else {
+            DriverRegistry.Entry entry = driverRegistry.find(info.getDbType()).orElse(null);
+            DriverManifest manifest = entry != null ? entry.getManifest() : null;
+            if (manifest == null || manifest.getDriverClass() == null || manifest.getDriverClass().isBlank()) {
+                throw new IllegalArgumentException("Missing driver.json manifest or driverClass for dbType: " + info.getDbType());
+            }
+            // Do NOT set driverClassName for dynamically loaded drivers.
+            // Hikari will attempt to load the class via the application/TCCL classloader, which will fail
+            // for URLClassLoader-isolated drivers. Instead, rely on DriverManager, where DriverShim has
+            // been registered during auto-load.
         }
 
         config.setConnectionTimeout(session.getOptions().getConnectionTimeoutMs());

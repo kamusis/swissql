@@ -1,6 +1,5 @@
 package com.swissql.util;
 
-import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -8,7 +7,132 @@ import java.util.Map;
 
 public class DsnParser {
 
-    public static JdbcConnectionInfo parse(String dsn, String dbType) {
+    /**
+     * Parsed DSN components.
+     */
+    public static class ParsedDsn {
+        private final String scheme;
+        private final String dbType;
+        private final String username;
+        private final String password;
+        private final String host;
+        private final int port;
+        private final String path;
+        private final String rawQuery;
+
+        /**
+         * Create a parsed DSN.
+         *
+         * @param scheme scheme
+         * @param dbType dbType
+         * @param username username
+         * @param password password
+         * @param host host
+         * @param port port
+         * @param path path
+         * @param rawQuery raw query
+         */
+        public ParsedDsn(
+                String scheme,
+                String dbType,
+                String username,
+                String password,
+                String host,
+                int port,
+                String path,
+                String rawQuery
+        ) {
+            this.scheme = scheme;
+            this.dbType = dbType;
+            this.username = username;
+            this.password = password;
+            this.host = host;
+            this.port = port;
+            this.path = path;
+            this.rawQuery = rawQuery;
+        }
+
+        /**
+         * Get scheme.
+         *
+         * @return scheme
+         */
+        public String getScheme() {
+            return scheme;
+        }
+
+        /**
+         * Get dbType.
+         *
+         * @return dbType
+         */
+        public String getDbType() {
+            return dbType;
+        }
+
+        /**
+         * Get username.
+         *
+         * @return username
+         */
+        public String getUsername() {
+            return username;
+        }
+
+        /**
+         * Get password.
+         *
+         * @return password
+         */
+        public String getPassword() {
+            return password;
+        }
+
+        /**
+         * Get host.
+         *
+         * @return host
+         */
+        public String getHost() {
+            return host;
+        }
+
+        /**
+         * Get port.
+         *
+         * @return port
+         */
+        public int getPort() {
+            return port;
+        }
+
+        /**
+         * Get path.
+         *
+         * @return path
+         */
+        public String getPath() {
+            return path;
+        }
+
+        /**
+         * Get raw query string.
+         *
+         * @return query
+         */
+        public String getRawQuery() {
+            return rawQuery;
+        }
+    }
+
+    /**
+     * Parse DSN into reusable components. This method does not perform dbType-specific JDBC URL mapping.
+     *
+     * @param dsn dsn
+     * @param dbType dbType
+     * @return parsed DSN
+     */
+    public static ParsedDsn parseComponents(String dsn, String dbType) {
         try {
             // Find the query part manually to preserve backslashes in parameter values (Windows paths)
             String baseDsn = dsn;
@@ -22,7 +146,7 @@ public class DsnParser {
             // Normalize backslashes ONLY in the authority/path part to avoid URI parsing errors.
             // Query parameters (Windows paths) must stay untouched.
             String basePart = baseDsn.replace("\\", "/");
-            
+
             // Use a custom approach for authority because URI.getHost() fails with underscores (common in TNS Aliases)
             String scheme = null;
             String userInfo = null;
@@ -34,7 +158,7 @@ public class DsnParser {
             if (schemeIdx != -1) {
                 scheme = basePart.substring(0, schemeIdx);
                 String authorityAndPath = basePart.substring(schemeIdx + 3);
-                
+
                 int pathIdx = authorityAndPath.indexOf('/');
                 String authority;
                 if (pathIdx != -1) {
@@ -66,8 +190,7 @@ public class DsnParser {
                     host = hostPort;
                 }
             }
-            
-            // Normalize dbType if not provided or to match scheme
+
             if (dbType == null || dbType.isEmpty()) {
                 dbType = scheme;
             }
@@ -80,20 +203,30 @@ public class DsnParser {
                 password = URLDecoder.decode(parts[1], StandardCharsets.UTF_8);
             }
 
+            return new ParsedDsn(scheme, dbType, username, password, host, port, path, query);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid DSN format: " + dsn, e);
+        }
+    }
+
+    public static JdbcConnectionInfo parse(String dsn, String dbType) {
+        try {
+            ParsedDsn parsed = parseComponents(dsn, dbType);
+
             String jdbcUrl;
-            if ("oracle".equalsIgnoreCase(dbType)) {
-                jdbcUrl = buildOracleJdbcUrl(host, port, path, query);
-            } else if ("postgres".equalsIgnoreCase(dbType) || "postgresql".equalsIgnoreCase(dbType)) {
-                jdbcUrl = buildPostgresJdbcUrl(host, port, path);
+            if ("oracle".equalsIgnoreCase(parsed.getDbType())) {
+                jdbcUrl = buildOracleJdbcUrl(parsed.getHost(), parsed.getPort(), parsed.getPath(), parsed.getRawQuery());
+            } else if ("postgres".equalsIgnoreCase(parsed.getDbType()) || "postgresql".equalsIgnoreCase(parsed.getDbType())) {
+                jdbcUrl = buildPostgresJdbcUrl(parsed.getHost(), parsed.getPort(), parsed.getPath());
             } else {
-                throw new IllegalArgumentException("Unsupported database type: " + dbType);
+                throw new IllegalArgumentException("Unsupported database type: " + parsed.getDbType());
             }
 
             return JdbcConnectionInfo.builder()
                     .url(jdbcUrl)
-                    .username(username)
-                    .password(password)
-                    .dbType(dbType.toLowerCase())
+                    .username(parsed.getUsername())
+                    .password(parsed.getPassword())
+                    .dbType(parsed.getDbType().toLowerCase())
                     .build();
 
         } catch (Exception e) {
@@ -101,7 +234,16 @@ public class DsnParser {
         }
     }
 
-    private static String buildOracleJdbcUrl(String host, int port, String path, String query) {
+    /**
+     * Build Oracle JDBC URL.
+     *
+     * @param host host
+     * @param port port
+     * @param path path
+     * @param query query string
+     * @return jdbc url
+     */
+    public static String buildOracleJdbcUrl(String host, int port, String path, String query) {
         Map<String, String> queryParams = parseQuery(query);
         String sid = queryParams.get("sid");
 
@@ -123,7 +265,15 @@ public class DsnParser {
         }
     }
 
-    private static String buildPostgresJdbcUrl(String host, int port, String path) {
+    /**
+     * Build Postgres JDBC URL.
+     *
+     * @param host host
+     * @param port port
+     * @param path path
+     * @return jdbc url
+     */
+    public static String buildPostgresJdbcUrl(String host, int port, String path) {
         if (port == -1) port = 5432;
         return String.format("jdbc:postgresql://%s:%d/%s", host, port, path);
     }

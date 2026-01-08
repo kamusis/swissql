@@ -1,6 +1,8 @@
 package com.swissql.controller;
 
 import com.swissql.api.*;
+import com.swissql.driver.DriverRegistry;
+import com.swissql.driver.JdbcDriverAutoLoader;
 import com.swissql.service.AiContextService;
 import com.swissql.service.AiSqlGenerateService;
 import com.swissql.service.DatabaseService;
@@ -12,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -24,17 +27,23 @@ public class SwissQLController {
     private final DatabaseService databaseService;
     private final AiSqlGenerateService aiSqlGenerateService;
     private final AiContextService aiContextService;
+    private final DriverRegistry driverRegistry;
+    private final JdbcDriverAutoLoader jdbcDriverAutoLoader;
 
     public SwissQLController(
             SessionManager sessionManager,
             DatabaseService databaseService,
             AiSqlGenerateService aiSqlGenerateService,
-            AiContextService aiContextService
+            AiContextService aiContextService,
+            DriverRegistry driverRegistry,
+            JdbcDriverAutoLoader jdbcDriverAutoLoader
     ) {
         this.sessionManager = sessionManager;
         this.databaseService = databaseService;
         this.aiSqlGenerateService = aiSqlGenerateService;
         this.aiContextService = aiContextService;
+        this.driverRegistry = driverRegistry;
+        this.jdbcDriverAutoLoader = jdbcDriverAutoLoader;
     }
 
     /**
@@ -266,6 +275,54 @@ public class SwissQLController {
             return cmd;
         }
         return cmd + " " + resolvedSchema;
+    }
+
+    /**
+     * List currently available JDBC drivers (built-in + directory-loaded).
+     *
+     * GET /v1/meta/drivers
+     *
+     * @return drivers response
+     */
+    @GetMapping("/meta/drivers")
+    public ResponseEntity<DriversResponse> metaDrivers() {
+        DriversResponse response = new DriversResponse();
+        List<DriversResponse.DriverEntry> entries = new ArrayList<>();
+
+        for (DriverRegistry.Entry e : driverRegistry.list()) {
+            DriversResponse.DriverEntry item = new DriversResponse.DriverEntry();
+            item.setDbType(e.getDbType());
+            item.setSource(e.getSource() != null ? e.getSource().name().toLowerCase() : "unknown");
+
+            if (e.getManifest() != null) {
+                item.setDriverClass(e.getManifest().getDriverClass());
+                item.setJdbcUrlTemplate(e.getManifest().getJdbcUrlTemplate());
+                item.setDefaultPort(e.getManifest().getDefaultPort());
+            }
+
+            item.setDriverClasses(e.getDiscoveredDriverClasses());
+            item.setJarPaths(e.getJarPaths());
+            entries.add(item);
+        }
+
+        response.setDrivers(entries);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Rescan the configured driver directory and register newly discovered JDBC drivers.
+     *
+     * POST /v1/meta/drivers/reload
+     *
+     * @return reload response
+     */
+    @PostMapping("/meta/drivers/reload")
+    public ResponseEntity<DriversReloadResponse> metaDriversReload() {
+        JdbcDriverAutoLoader.ReloadResult result = jdbcDriverAutoLoader.reload();
+        DriversReloadResponse response = new DriversReloadResponse();
+        response.setStatus("ok");
+        response.setReloaded(result.toMap());
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/meta/conninfo")
