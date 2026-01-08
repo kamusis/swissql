@@ -36,7 +36,9 @@ func handleReplMetaCommands(
 			setDisplayExpanded(!displayExpanded)
 			if cfg != nil {
 				cfg.DisplayExpanded = displayExpanded
-				_ = config.SaveConfig(cfg)
+				if err := config.SaveConfig(cfg); err != nil {
+					fmt.Printf("Warning: could not save config: %v\n", err)
+				}
 			}
 			if displayExpanded {
 				fmt.Println("Expanded display mode enabled.")
@@ -50,7 +52,9 @@ func handleReplMetaCommands(
 			setDisplayExpanded(true)
 			if cfg != nil {
 				cfg.DisplayExpanded = true
-				_ = config.SaveConfig(cfg)
+				if err := config.SaveConfig(cfg); err != nil {
+					fmt.Printf("Warning: could not save config: %v\n", err)
+				}
 			}
 			fmt.Println("Expanded display mode enabled.")
 			return true
@@ -58,7 +62,9 @@ func handleReplMetaCommands(
 			setDisplayExpanded(false)
 			if cfg != nil {
 				cfg.DisplayExpanded = false
-				_ = config.SaveConfig(cfg)
+				if err := config.SaveConfig(cfg); err != nil {
+					fmt.Printf("Warning: could not save config: %v\n", err)
+				}
 			}
 			fmt.Println("Expanded display mode disabled.")
 			return true

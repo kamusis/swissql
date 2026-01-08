@@ -163,9 +163,6 @@ func handleReplAICommand(
 		}
 		confirm = strings.TrimSpace(confirm)
 		execute = confirm == "" || strings.EqualFold(confirm, "y") || strings.EqualFold(confirm, "yes")
-		if strings.EqualFold(confirm, "n") || strings.EqualFold(confirm, "no") {
-			execute = false
-		}
 	}
 
 	if !execute {

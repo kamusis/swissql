@@ -74,7 +74,9 @@ var lsCmd = &cobra.Command{
 					return err
 				}
 				if cfg != nil {
-					_ = config.SaveConfig(cfg)
+					if err := config.SaveConfig(cfg); err != nil {
+						fmt.Printf("Warning: could not save config: %v\n", err)
+					}
 				}
 				fmt.Printf("Pruned %d unreachable session(s): %s\n", len(pruned), strings.Join(pruned, ", "))
 			}
@@ -128,7 +130,9 @@ var attachCmd = &cobra.Command{
 		}
 
 		cfg.CurrentName = name
-		_ = config.SaveConfig(cfg)
+		if err := config.SaveConfig(cfg); err != nil {
+			fmt.Printf("Warning: could not save config: %v\n", err)
+		}
 		_ = config.TouchSession(name)
 
 		replCmd.Flags().Set("name", name)
@@ -172,7 +176,9 @@ var killCmd = &cobra.Command{
 		cfg, _ := config.LoadConfig()
 		if cfg.CurrentName == name {
 			cfg.CurrentName = ""
-			_ = config.SaveConfig(cfg)
+			if err := config.SaveConfig(cfg); err != nil {
+				fmt.Printf("Warning: could not save config: %v\n", err)
+			}
 		}
 
 		fmt.Printf("Killed session: %s\n", name)

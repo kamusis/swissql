@@ -98,7 +98,9 @@ func handleReplDetachExit(
 		}
 		if cfg != nil && cfg.CurrentName == resolvedName {
 			cfg.CurrentName = ""
-			_ = config.SaveConfig(cfg)
+			if err := config.SaveConfig(cfg); err != nil {
+				fmt.Printf("Warning: could not save config: %v\n", err)
+			}
 		}
 	}
 
@@ -122,7 +124,9 @@ func handleReplSetDisplay(line *liner.State, historyMode string, input string, c
 			setDisplayWide(true)
 			if cfg != nil {
 				cfg.DisplayWide = true
-				_ = config.SaveConfig(cfg)
+				if err := config.SaveConfig(cfg); err != nil {
+					fmt.Printf("Warning: could not save config: %v\n", err)
+				}
 			}
 			fmt.Println("Display mode set to wide.")
 			return true
@@ -130,7 +134,9 @@ func handleReplSetDisplay(line *liner.State, historyMode string, input string, c
 			setDisplayWide(false)
 			if cfg != nil {
 				cfg.DisplayWide = false
-				_ = config.SaveConfig(cfg)
+				if err := config.SaveConfig(cfg); err != nil {
+					fmt.Printf("Warning: could not save config: %v\n", err)
+				}
 			}
 			fmt.Println("Display mode set to narrow.")
 			return true
@@ -143,7 +149,9 @@ func handleReplSetDisplay(line *liner.State, historyMode string, input string, c
 			setDisplayExpanded(true)
 			if cfg != nil {
 				cfg.DisplayExpanded = true
-				_ = config.SaveConfig(cfg)
+				if err := config.SaveConfig(cfg); err != nil {
+					fmt.Printf("Warning: could not save config: %v\n", err)
+				}
 			}
 			fmt.Println("Expanded display mode enabled.")
 			return true
@@ -151,7 +159,9 @@ func handleReplSetDisplay(line *liner.State, historyMode string, input string, c
 			setDisplayExpanded(false)
 			if cfg != nil {
 				cfg.DisplayExpanded = false
-				_ = config.SaveConfig(cfg)
+				if err := config.SaveConfig(cfg); err != nil {
+					fmt.Printf("Warning: could not save config: %v\n", err)
+				}
 			}
 			fmt.Println("Expanded display mode disabled.")
 			return true
@@ -167,7 +177,9 @@ func handleReplSetDisplay(line *liner.State, historyMode string, input string, c
 		setDisplayWidth(w)
 		if cfg != nil {
 			cfg.Display.MaxColWidth = displayMaxColWidth
-			_ = config.SaveConfig(cfg)
+			if err := config.SaveConfig(cfg); err != nil {
+				fmt.Printf("Warning: could not save config: %v\n", err)
+			}
 		}
 		fmt.Printf("Display column width set to %d.\n", displayMaxColWidth)
 		return true
@@ -195,7 +207,9 @@ func handleReplSetOutput(line *liner.State, historyMode string, input string, cf
 		}
 		if cfg != nil {
 			cfg.OutputFormat = strings.ToLower(strings.TrimSpace(args[2]))
-			_ = config.SaveConfig(cfg)
+			if err := config.SaveConfig(cfg); err != nil {
+				fmt.Printf("Warning: could not save config: %v\n", err)
+			}
 		}
 		fmt.Printf("Output format set to %s.\n", strings.ToLower(strings.TrimSpace(args[2])))
 		return true

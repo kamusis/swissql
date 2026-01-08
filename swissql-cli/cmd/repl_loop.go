@@ -26,7 +26,9 @@ func runRepl(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		cfg.CurrentName = name
-		_ = config.SaveConfig(cfg)
+		if err := config.SaveConfig(cfg); err != nil {
+			fmt.Printf("Warning: could not save config: %v\n", err)
+		}
 		_ = config.TouchSession(name)
 	}
 
@@ -165,9 +167,17 @@ func runRepl(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if f, err := os.Create(historyPath); err == nil {
-		line.WriteHistory(f)
-		f.Close()
+	if f, err := os.Create(historyPath); err != nil {
+		fmt.Printf("Warning: could not create history file: %v\n", err)
+	} else {
+		defer func() {
+			if err := f.Close(); err != nil {
+				fmt.Printf("Warning: could not close history file: %v\n", err)
+			}
+		}()
+		if _, err := line.WriteHistory(f); err != nil {
+			fmt.Printf("Warning: could not write history: %v\n", err)
+		}
 	}
 
 	return nil

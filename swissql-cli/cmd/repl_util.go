@@ -34,7 +34,21 @@ func isMetaCommandStart(s string) bool {
 	if s == "" {
 		return false
 	}
-	return strings.HasPrefix(s, "\\") || strings.HasPrefix(strings.ToLower(s), "desc") || strings.HasPrefix(strings.ToLower(s), "explain") || strings.HasPrefix(s, "@") || strings.EqualFold(s, "conninfo")
+	if strings.HasPrefix(s, "\\") || strings.HasPrefix(s, "@") {
+		return true
+	}
+
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return false
+	}
+	firstWord := strings.ToLower(fields[0])
+	switch firstWord {
+	case "desc", "desc+", "explain", "conninfo":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseMetaCommand(input string) (string, []string) {
