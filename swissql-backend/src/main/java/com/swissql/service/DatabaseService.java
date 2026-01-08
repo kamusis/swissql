@@ -856,9 +856,12 @@ public class DatabaseService {
         DataSource ds = getDataSource(session);
         try (Connection conn = ds.getConnection()) {
             String sql;
-            if ("oracle".equals(dbType)) {
+            boolean isOracle = "oracle".equals(dbType);
+            boolean isPostgres = "postgres".equals(dbType) || "postgresql".equals(dbType);
+
+            if (isOracle) {
                 sql = buildOracleCompletionSql(resolvedKind, resolvedSchema, resolvedTable, resolvedPrefix);
-            } else if ("postgres".equals(dbType) || "postgresql".equals(dbType)) {
+            } else if (isPostgres) {
                 sql = buildPostgresCompletionSql(resolvedKind, resolvedSchema, resolvedTable, resolvedPrefix);
             } else {
                 response.setData(data);
@@ -870,13 +873,13 @@ public class DatabaseService {
                 try (PreparedStatement ps = conn.prepareStatement(sql)) {
                     int paramIndex = 1;
                     if (!resolvedSchema.isBlank()) {
-                        ps.setString(paramIndex++, resolvedSchema.toUpperCase());
+                        ps.setString(paramIndex++, isOracle ? resolvedSchema.toUpperCase() : resolvedSchema);
                     }
                     if (!resolvedTable.isBlank()) {
-                        ps.setString(paramIndex++, resolvedTable.toUpperCase());
+                        ps.setString(paramIndex++, isOracle ? resolvedTable.toUpperCase() : resolvedTable);
                     }
                     if (!resolvedPrefix.isBlank()) {
-                        ps.setString(paramIndex++, resolvedPrefix.toUpperCase() + "%");
+                        ps.setString(paramIndex++, isOracle ? resolvedPrefix.toUpperCase() + "%" : resolvedPrefix + "%");
                     }
 
                     try (ResultSet rs = ps.executeQuery()) {
