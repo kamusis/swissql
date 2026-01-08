@@ -14,27 +14,59 @@ import (
 )
 
 func runRepl(cmd *cobra.Command, args []string) error {
-	name, _ := cmd.Flags().GetString("name")
+	_ = args
+
+	name := ""
+	if cmd.Flags().Lookup("name") != nil {
+		name, _ = cmd.Flags().GetString("name")
+	}
+
+	server := ""
+	if cmd.Flags().Lookup("server") != nil {
+		server, _ = cmd.Flags().GetString("server")
+	} else if cmd.InheritedFlags().Lookup("server") != nil {
+		server, _ = cmd.InheritedFlags().GetString("server")
+	}
+
 	entry, err := config.ResolveActiveSession(name)
 	if err != nil {
-		return err
+		// Empty REPL: backend-only session, no DB connection yet.
+		if strings.TrimSpace(server) == "" {
+			server = "http://localhost:8080"
+		}
+		entry = config.SessionEntry{ServerURL: server}
+		name = ""
+	} else {
+		// Prefer the persisted server URL for attached sessions.
+		if strings.TrimSpace(entry.ServerURL) != "" {
+			server = entry.ServerURL
+		}
+		if strings.TrimSpace(server) == "" {
+			server = "http://localhost:8080"
+		}
+
+		// If a session name is explicitly provided, persist it as current.
+		if name != "" {
+			cfg, err := config.LoadConfig()
+			if err != nil {
+				return err
+			}
+			cfg.CurrentName = name
+			if err := config.SaveConfig(cfg); err != nil {
+				fmt.Printf("Warning: could not save config: %v\n", err)
+			}
+			_ = config.TouchSession(name)
+		}
 	}
 
-	if name != "" {
-		cfg, err := config.LoadConfig()
-		if err != nil {
-			return err
-		}
-		cfg.CurrentName = name
-		if err := config.SaveConfig(cfg); err != nil {
-			fmt.Printf("Warning: could not save config: %v\n", err)
-		}
-		_ = config.TouchSession(name)
-	}
-
-	server := entry.ServerURL
 	timeout, _ := cmd.Flags().GetInt("connection-timeout")
 	c := client.NewClient(server, time.Duration(timeout)*time.Millisecond)
+
+	sessionId := entry.SessionId
+	currentDbType := ""
+	if strings.TrimSpace(sessionId) != "" {
+		currentDbType = entry.DbType
+	}
 
 	// Load persisted CLI display settings
 	cfg, err := config.LoadConfig()
@@ -50,7 +82,7 @@ func runRepl(cmd *cobra.Command, args []string) error {
 	defer line.Close()
 
 	line.SetCtrlCAborts(true)
-	line.SetCompleter(makeCompleter(c, entry.SessionId))
+	line.SetCompleter(makeCompleter(c, sessionId))
 
 	historyPath, _ := config.GetHistoryPath()
 	if f, err := os.Open(historyPath); err == nil {
@@ -58,10 +90,16 @@ func runRepl(cmd *cobra.Command, args []string) error {
 		f.Close()
 	}
 
-	fmt.Printf("SwissQL REPL (Session: %s)\n", entry.SessionId)
-	fmt.Println("Type 'help' for commands. Use 'detach' to leave without disconnecting.")
-	fmt.Println("Type 'exit' or 'quit' to disconnect and remove this session.")
-	fmt.Println("Use '/ai <prompt>' to generate SQL via backend and confirm before execution.")
+	if strings.TrimSpace(sessionId) == "" {
+		fmt.Printf("SwissQL REPL (Backend: %s)\n", server)
+		fmt.Println("Type 'help' for commands. Use 'detach' to leave.")
+		fmt.Println("Use 'connect <dsn>' to connect to a database.")
+	} else {
+		fmt.Printf("SwissQL REPL (Session: %s)\n", sessionId)
+		fmt.Println("Type 'help' for commands. Use 'detach' to leave without disconnecting.")
+		fmt.Println("Type 'exit' or 'quit' to disconnect and remove this session.")
+		fmt.Println("Use '/ai <prompt>' to generate SQL via backend and confirm before execution.")
+	}
 
 	var multiLineSql []string
 
@@ -98,7 +136,7 @@ func runRepl(cmd *cobra.Command, args []string) error {
 			cfg.History.Mode,
 			input,
 			c,
-			entry.SessionId,
+			sessionId,
 			name,
 			cfg,
 		)
@@ -117,30 +155,64 @@ func runRepl(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		// Phase 3 P0 meta-commands (single-line)
-		if isMetaCommandStart(input) {
-			cmdName, args := parseMetaCommand(input)
-
-			if handleReplMetaCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, entry.SessionId, cfg) {
-				continue
-			}
-
-			if handleReplIOCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, entry.SessionId) {
-				continue
-			}
-		}
-
-		if handleReplContextCommands(line, cfg.History.Mode, input, lower, c, entry.SessionId) {
+		if handleReplSetDbType(cmd, line, cfg.History.Mode, input, c, sessionId, &currentDbType) {
 			continue
 		}
 
-		if handleReplAICommand(cmd, line, cfg.History.Mode, input, c, entry.SessionId, entry.DbType, &multiLineSql) {
+		if handleReplDriverCommands(cmd, line, cfg.History.Mode, input, c) {
+			continue
+		}
+
+		connected, newEntry, newName := handleReplConnectCommand(cmd, line, cfg.History.Mode, input, c)
+		if connected {
+			sessionId = newEntry.SessionId
+			entry = newEntry
+			currentDbType = entry.DbType
+			name = newName
+			line.SetCompleter(makeCompleter(c, sessionId))
+			invalidateCache()
+			fmt.Printf("Connected successfully! Session ID: %s\n", sessionId)
+			continue
+		}
+
+		// Phase 3 P0 meta-commands (single-line)
+		if isMetaCommandStart(input) {
+			if strings.TrimSpace(sessionId) == "" {
+				fmt.Println("Error: no active DB session. Use 'connect <dsn>' first.")
+				continue
+			}
+			cmdName, args := parseMetaCommand(input)
+
+			if handleReplMetaCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId, cfg) {
+				continue
+			}
+
+			if handleReplIOCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId) {
+				continue
+			}
+		}
+
+		if strings.TrimSpace(sessionId) != "" {
+			if handleReplContextCommands(line, cfg.History.Mode, input, lower, c, sessionId) {
+				continue
+			}
+		} else if strings.HasPrefix(lower, "/context") {
+			fmt.Println("Error: no active DB session. Use 'connect <dsn>' first.")
+			continue
+		}
+
+		if handleReplAICommand(cmd, line, cfg.History.Mode, input, c, sessionId, currentDbType, &multiLineSql) {
 			continue
 		}
 
 		multiLineSql = append(multiLineSql, input)
 
 		if strings.HasSuffix(input, ";") {
+			if strings.TrimSpace(sessionId) == "" {
+				fmt.Println("Error: no active DB session. Use 'connect <dsn>' first.")
+				multiLineSql = nil
+				continue
+			}
 			sql := strings.Join(multiLineSql, "\n")
 			sql = strings.TrimSuffix(sql, ";")
 			multiLineSql = nil
@@ -148,7 +220,7 @@ func runRepl(cmd *cobra.Command, args []string) error {
 			line.AppendHistory(strings.ReplaceAll(sql, "\n", " ") + ";")
 
 			req := &client.ExecuteRequest{
-				SessionId: entry.SessionId,
+				SessionId: sessionId,
 				Sql:       sql,
 				Options: client.ExecuteOptions{
 					Limit:          0,

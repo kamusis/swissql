@@ -93,6 +93,41 @@ type MetaExplainRequest struct {
 	Analyze   bool   `json:"analyze"`
 }
 
+type DriversResponse struct {
+	Drivers []DriverEntry `json:"drivers"`
+}
+
+type DriversReloadResponse struct {
+	Status   string                 `json:"status"`
+	Reloaded map[string]interface{} `json:"reloaded"`
+}
+
+type DriverEntry struct {
+	DbType          string   `json:"db_type"`
+	Source          string   `json:"source"`
+	DriverClass     string   `json:"driver_class"`
+	DriverClasses   []string `json:"driver_classes"`
+	JarPaths        []string `json:"jar_paths"`
+	JdbcUrlTemplate string   `json:"jdbc_url_template"`
+	DefaultPort     *int     `json:"default_port"`
+}
+
+func (r *DriversResponse) HasDbType(dbType string) bool {
+	if r == nil {
+		return false
+	}
+	needle := strings.ToLower(strings.TrimSpace(dbType))
+	if needle == "" {
+		return false
+	}
+	for _, d := range r.Drivers {
+		if strings.ToLower(strings.TrimSpace(d.DbType)) == needle {
+			return true
+		}
+	}
+	return false
+}
+
 type DataContent struct {
 	TextContent string                   `json:"text_content,omitempty"`
 	Columns     []ColumnDefinition       `json:"columns,omitempty"`
@@ -230,6 +265,36 @@ func (c *Client) MetaDescribe(sessionId string, name string, detail string) (*Ex
 	defer body.Close()
 
 	var resp ExecuteResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) ReloadDrivers() (*DriversReloadResponse, error) {
+	urlStr := fmt.Sprintf("%s/v1/meta/drivers/reload", c.BaseURL)
+	body, err := c.post(urlStr, map[string]interface{}{})
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp DriversReloadResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) MetaDrivers() (*DriversResponse, error) {
+	urlStr := fmt.Sprintf("%s/v1/meta/drivers", c.BaseURL)
+	body, err := c.get(urlStr)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp DriversResponse
 	if err := json.NewDecoder(body).Decode(&resp); err != nil {
 		return nil, err
 	}

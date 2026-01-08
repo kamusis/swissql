@@ -32,8 +32,8 @@ func TestCLI_HelpSmoke(t *testing.T) {
 	if !strings.Contains(stdout, "Usage:") || !strings.Contains(stdout, "swissql [command]") {
 		t.Fatalf("expected help output to include usage for swissql, got: %q", stdout)
 	}
-	if !strings.Contains(stdout, "repl") {
-		t.Fatalf("expected help output to mention repl command, got: %q", stdout)
+	if !strings.Contains(strings.ToLower(stdout), "run without a subcommand") {
+		t.Fatalf("expected help output to describe default REPL behavior, got: %q", stdout)
 	}
 }
 
@@ -44,21 +44,6 @@ func TestCLI_SubcommandHelpSmoke(t *testing.T) {
 		args        []string
 		wantSubstrs []string
 	}{
-		{
-			name: "repl_help",
-			args: []string{"repl", "--help"},
-			wantSubstrs: []string{
-				"repl",
-				"interactive",
-			},
-		},
-		{
-			name: "query_help",
-			args: []string{"query", "--help"},
-			wantSubstrs: []string{
-				"query",
-			},
-		},
 		{
 			name: "connect_help",
 			args: []string{"connect", "--help"},

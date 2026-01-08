@@ -95,6 +95,27 @@ func handleReplAICommand(
 		line.AppendHistory(input)
 	}
 
+	if strings.TrimSpace(dbType) == "" {
+		fmt.Println("Error: dbType is not set. Use 'set dbtype <dbtype>' first.")
+		drivers, err := c.MetaDrivers()
+		if err == nil && drivers != nil {
+			options := make([]string, 0, len(drivers.Drivers))
+			seen := map[string]bool{}
+			for _, d := range drivers.Drivers {
+				k := strings.ToLower(strings.TrimSpace(d.DbType))
+				if k == "" || seen[k] {
+					continue
+				}
+				seen[k] = true
+				options = append(options, k)
+			}
+			if len(options) > 0 {
+				fmt.Printf("Available dbTypes: %s\n", strings.Join(options, ", "))
+			}
+		}
+		return true
+	}
+
 	aResp, err := c.AiGenerate(&client.AiGenerateRequest{
 		Prompt:       promptText,
 		DbType:       dbType,
@@ -167,6 +188,11 @@ func handleReplAICommand(
 
 	if !execute {
 		fmt.Println("Aborted.")
+		return true
+	}
+
+	if strings.TrimSpace(sessionId) == "" {
+		fmt.Println("Error: no active DB session. Use 'connect <dsn>' to execute generated SQL.")
 		return true
 	}
 

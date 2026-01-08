@@ -194,14 +194,26 @@ func makeLineCompletions(line string, lastWord string, candidates []string, appe
 func makeCompleter(c *client.Client, sessionId string) func(string) []string {
 	return func(line string) []string {
 		if line == "" {
-			return []string{
+			base := []string{
+				"help", "detach", "exit", "quit",
+				"set display wide|narrow", "set display expanded on|off", "set display width",
+				"set dbtype",
+				"set output table|csv|tsv|json",
+				"list drivers", "reload drivers",
+				"connect",
+				"/ai",
+			}
+			if strings.TrimSpace(sessionId) == "" {
+				return base
+			}
+			return append(base,
 				"\\d", "\\d+", "\\dt", "\\dv", "\\i", "\\explain", "\\conninfo", "\\x", "\\timing", "\\watch",
-				"desc", "desc+", "explain", "explain plan for", "explain analyze", "help", "detach", "exit", "quit",
-				"@<file>", "set display expanded on|off",
-				"/ai", "/context",
+				"desc", "desc+", "explain", "explain plan for", "explain analyze",
+				"@<file>",
+				"/context",
 				"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER",
 				"FROM", "WHERE", "JOIN", "GROUP BY", "ORDER BY",
-			}
+			)
 		}
 
 		trimmedLine := strings.TrimSpace(line)
@@ -246,15 +258,15 @@ func makeCompleter(c *client.Client, sessionId string) func(string) []string {
 			// File path completion
 			return makeLineCompletions(line, lastWord, completeFilePath(lastWord), false)
 
-		case strings.EqualFold(prevWord, "\\d") || strings.EqualFold(prevWord, "\\d+") || strings.EqualFold(prevWord, "desc") || strings.EqualFold(prevWord, "desc+"):
+		case strings.TrimSpace(sessionId) != "" && (strings.EqualFold(prevWord, "\\d") || strings.EqualFold(prevWord, "\\d+") || strings.EqualFold(prevWord, "desc") || strings.EqualFold(prevWord, "desc+")):
 			// Table/view name completion
 			return makeLineCompletions(line, lastWord, completeTableNames(c, sessionId, lastWord), true)
 
-		case strings.EqualFold(prevWord, "\\dt"):
+		case strings.TrimSpace(sessionId) != "" && strings.EqualFold(prevWord, "\\dt"):
 			// Schema name completion for \dt
 			return makeLineCompletions(line, lastWord, completeSchemaNames(c, sessionId, lastWord), true)
 
-		case strings.EqualFold(prevWord, "\\dv"):
+		case strings.TrimSpace(sessionId) != "" && strings.EqualFold(prevWord, "\\dv"):
 			// Schema name completion for \dv
 			return makeLineCompletions(line, lastWord, completeSchemaNames(c, sessionId, lastWord), true)
 
@@ -278,7 +290,24 @@ func makeCompleter(c *client.Client, sessionId string) func(string) []string {
 			options := []string{"show", "clear"}
 			return makeLineCompletions(line, lastWord, filterCompletions(options, lastWord), true)
 
-		case prevWord == "SELECT" || prevWord == "INSERT" || prevWord == "UPDATE" || prevWord == "DELETE":
+		case strings.EqualFold(prevWord, "DBTYPE") && len(words) >= 2 && strings.EqualFold(words[0], "set"):
+			drivers, err := c.MetaDrivers()
+			if err != nil || drivers == nil {
+				return nil
+			}
+			options := make([]string, 0, len(drivers.Drivers))
+			seen := map[string]bool{}
+			for _, d := range drivers.Drivers {
+				k := strings.ToLower(strings.TrimSpace(d.DbType))
+				if k == "" || seen[k] {
+					continue
+				}
+				seen[k] = true
+				options = append(options, k)
+			}
+			return makeLineCompletions(line, lastWord, filterCompletions(options, lastWord), true)
+
+		case strings.TrimSpace(sessionId) != "" && (prevWord == "SELECT" || prevWord == "INSERT" || prevWord == "UPDATE" || prevWord == "DELETE"):
 			// SQL keyword completion
 			sqlKeywords := []string{"FROM", "WHERE", "JOIN", "GROUP BY", "ORDER BY"}
 			keywordMatches := filterCompletions(sqlKeywords, lastWord)
@@ -287,11 +316,11 @@ func makeCompleter(c *client.Client, sessionId string) func(string) []string {
 			// Combine both
 			return makeLineCompletions(line, lastWord, append(keywordMatches, columnMatches...), true)
 
-		case prevWord == "FROM" || prevWord == "JOIN":
+		case strings.TrimSpace(sessionId) != "" && (prevWord == "FROM" || prevWord == "JOIN"):
 			// Table/view name completion
 			return makeLineCompletions(line, lastWord, completeTableNames(c, sessionId, lastWord), true)
 
-		case prevWord == "WHERE" || prevWord == "GROUP BY" || prevWord == "ORDER BY":
+		case strings.TrimSpace(sessionId) != "" && (prevWord == "WHERE" || prevWord == "GROUP BY" || prevWord == "ORDER BY"):
 			// Column name completion
 			return makeLineCompletions(line, lastWord, completeColumnNames(c, sessionId, lastWord, trimmedLine), true)
 

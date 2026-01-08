@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -24,13 +25,27 @@ var connectCmd = &cobra.Command{
 		useMcp, _ := cmd.Flags().GetBool("use-mcp")
 
 		dbType := "oracle" // Default
-		if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		if parsed, err := url.Parse(dsn); err == nil {
+			if strings.TrimSpace(parsed.Scheme) != "" {
+				dbType = strings.ToLower(parsed.Scheme)
+			}
+		}
+		if dbType == "postgresql" {
 			dbType = "postgres"
 		}
 
 		fmt.Printf("Connecting to %s via backend %s...\n", dsn, server)
 
 		c := client.NewClient(server, time.Duration(timeout)*time.Millisecond)
+		if dbType != "oracle" && dbType != "postgres" {
+			drivers, err := c.MetaDrivers()
+			if err != nil {
+				return err
+			}
+			if !drivers.HasDbType(dbType) {
+				return fmt.Errorf("unknown dbType %q. Ensure the backend has loaded the JDBC driver and try again", dbType)
+			}
+		}
 		req := &client.ConnectRequest{
 			Dsn:    dsn,
 			DbType: dbType,

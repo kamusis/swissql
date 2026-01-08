@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/kamusis/swissql/swissql-cli/internal/client"
 	"github.com/kamusis/swissql/swissql-cli/internal/config"
@@ -115,42 +114,6 @@ func resetOutputWriter() error {
 
 func parseDisplayWidthArg(s string) (int, error) {
 	return strconv.Atoi(s)
-}
-
-var queryCmd = &cobra.Command{
-	Use:   "query [SQL]",
-	Short: "Execute a SQL query",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		sql := args[0]
-		name, _ := cmd.Flags().GetString("name")
-		entry, err := config.ResolveActiveSession(name)
-		if err != nil {
-			return err
-		}
-
-		server := entry.ServerURL
-		timeout, _ := cmd.Flags().GetInt("connection-timeout")
-
-		c := client.NewClient(server, time.Duration(timeout)*time.Millisecond)
-		req := &client.ExecuteRequest{
-			SessionId: entry.SessionId,
-			Sql:       sql,
-			Options: client.ExecuteOptions{
-				Limit:          0,
-				FetchSize:      50,
-				QueryTimeoutMs: 0,
-			},
-		}
-
-		resp, err := c.Execute(req)
-		if err != nil {
-			return err
-		}
-
-		renderResponse(cmd, resp)
-		return nil
-	},
 }
 
 func renderResponse(cmd *cobra.Command, resp *client.ExecuteResponse) {
@@ -338,6 +301,4 @@ func init() {
 			// already set
 		}
 	}
-	rootCmd.AddCommand(queryCmd)
-	queryCmd.Flags().String("name", "", "Session name to use (tmux-like)")
 }

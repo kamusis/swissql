@@ -24,24 +24,26 @@ func handleReplHelp(line *liner.State, historyMode string, input string) bool {
 	fmt.Println("")
 	fmt.Println("[CLI]")
 	fmt.Println("  help                          Show this help")
+	fmt.Println("  connect <dsn>                 Connect to a database and create a named session")
+	fmt.Println("  list drivers                  List JDBC drivers loaded by backend")
+	fmt.Println("  reload drivers                Rescan and reload JDBC drivers on backend")
 	fmt.Println("  detach                        Leave REPL without disconnecting (like tmux detach)")
 	fmt.Println("  exit | quit                   Disconnect backend session and remove it from registry")
 	fmt.Println("  set display wide|narrow       Toggle truncation mode for tabular output")
 	fmt.Println("  set display expanded on|off   Expanded display mode")
 	fmt.Println("  set display width <n>         Set max column width for tabular output")
+	fmt.Println("  set dbtype <dbtype>           Set dbType for /ai in empty REPL (before connect)")
 	fmt.Println("  set output table|csv|tsv|json Set output format")
 	fmt.Println("")
 	fmt.Println("[psql-compat (\\)]")
-	fmt.Println("  \\conninfo                    Show current session and backend information")
-	fmt.Println("  \\d <name> (alias: desc)       Describe a table/view")
-	fmt.Println("  \\d+ <name> (alias: desc+)     Describe with more details")
+	fmt.Println("  \\conninfo                     Show current session and backend information")
+	fmt.Println("  \\d <name>                     Describe a table/view (alias: desc)")
+	fmt.Println("  \\d+ <name>                    Describe with more details (alias: desc+)")
 	fmt.Println("  \\dt | \\dv                     List tables/views")
-	fmt.Println("  \\explain <sql> (alias: explain, explain plan for)")
-	fmt.Println("                               Show execution plan")
-	fmt.Println("  \\explain analyze <sql> (alias: explain analyze)")
-	fmt.Println("                               Show actual execution plan (executes the statement)")
-	fmt.Println("  \\i <file> (alias: @<file>)    Execute statements from a file")
-	fmt.Println("  \\x [on|off]                   Expanded display mode (like psql \\\\x)")
+	fmt.Println("  \\explain <sql>                Show execution plan (alias: explain, explain plan for)")
+	fmt.Println("  \\explain analyze <sql>        Show actual execution plan (executes the statement) (alias: explain analyze)")
+	fmt.Println("  \\i <file>                     Execute statements from a file (alias: @<file>)")
+	fmt.Println("  \\x [on|off]                   Expanded display mode (same as set display expanded on|off)")
 	fmt.Println("  \\o <file>                     Redirect query output to a file")
 	fmt.Println("  \\o                            Restore output to stdout")
 	fmt.Println("")
@@ -77,6 +79,11 @@ func handleReplDetachExit(
 	}
 
 	if lower == "detach" {
+		return true, true
+	}
+
+	if strings.TrimSpace(sessionID) == "" {
+		// Empty REPL: no DB session to disconnect.
 		return true, true
 	}
 
@@ -216,5 +223,50 @@ func handleReplSetOutput(line *liner.State, historyMode string, input string, cf
 	}
 
 	fmt.Println("Usage: set output table|csv|tsv|json")
+	return true
+}
+
+func handleReplSetDbType(cmd *cobra.Command, line *liner.State, historyMode string, input string, c *client.Client, sessionId string, currentDbType *string) bool {
+	_ = cmd
+	trimmed := strings.TrimSpace(input)
+	lower := strings.ToLower(trimmed)
+	if !strings.HasPrefix(lower, "set dbtype ") {
+		return false
+	}
+	if shouldRecordHistory(historyMode, input, false) {
+		line.AppendHistory(input)
+	}
+
+	if strings.TrimSpace(sessionId) != "" {
+		fmt.Println("Error: already connected. dbType automatically follows current session.")
+		return true
+	}
+
+	parts := strings.Fields(trimmed)
+	if len(parts) != 3 {
+		fmt.Println("Usage: set dbtype <dbtype>")
+		return true
+	}
+	chosen := strings.ToLower(strings.TrimSpace(parts[2]))
+	if chosen == "postgresql" {
+		chosen = "postgres"
+	}
+	if chosen == "" {
+		fmt.Println("Usage: set dbtype <dbtype>")
+		return true
+	}
+
+	drivers, err := c.MetaDrivers()
+	if err != nil {
+		fmt.Printf("%v\n", err)
+		return true
+	}
+	if !drivers.HasDbType(chosen) {
+		fmt.Printf("Error: unknown dbType %q. Use 'list drivers' to see available dbTypes.\n", chosen)
+		return true
+	}
+
+	*currentDbType = chosen
+	fmt.Printf("dbType set to %s.\n", chosen)
 	return true
 }

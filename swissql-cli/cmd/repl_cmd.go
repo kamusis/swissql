@@ -11,6 +11,5 @@ var replCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(replCmd)
 	replCmd.Flags().String("name", "", "Session name to use (tmux-like)")
 }

@@ -103,9 +103,10 @@ var lsCmd = &cobra.Command{
 }
 
 var attachCmd = &cobra.Command{
-	Use:   "attach [name]",
-	Short: "Attach to a named session and start REPL",
-	Args:  cobra.RangeArgs(0, 1),
+	Use:     "attach [name]",
+	Short:   "Attach to a named session and start REPL",
+	Aliases: []string{"a"},
+	Args:    cobra.RangeArgs(0, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.LoadConfig()
 		if err != nil {
@@ -137,15 +138,6 @@ var attachCmd = &cobra.Command{
 
 		replCmd.Flags().Set("name", name)
 		return replCmd.RunE(replCmd, nil)
-	},
-}
-
-var attachAliasCmd = &cobra.Command{
-	Use:   "a [name]",
-	Short: "Alias for attach",
-	Args:  cobra.RangeArgs(0, 1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return attachCmd.RunE(attachCmd, args)
 	},
 }
 
@@ -190,6 +182,5 @@ func init() {
 	rootCmd.AddCommand(lsCmd)
 	lsCmd.Flags().Bool("prune", false, "Remove sessions whose backends are unreachable")
 	rootCmd.AddCommand(attachCmd)
-	rootCmd.AddCommand(attachAliasCmd)
 	rootCmd.AddCommand(killCmd)
 }
