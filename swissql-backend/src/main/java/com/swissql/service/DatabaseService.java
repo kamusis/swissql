@@ -830,6 +830,7 @@ public class DatabaseService {
 
         JdbcConnectionInfo info = jdbcConnectionInfoResolver.resolve(dsn, session.getDbType());
         HikariConfig config = new HikariConfig();
+        config.setExceptionOverrideClassName("com.swissql.service.HikariSqlExceptionOverride");
         config.setJdbcUrl(info.getUrl());
         config.setUsername(info.getUsername());
         config.setPassword(info.getPassword());
