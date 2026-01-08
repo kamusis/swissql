@@ -154,139 +154,177 @@ var queryCmd = &cobra.Command{
 }
 
 func renderResponse(cmd *cobra.Command, resp *client.ExecuteResponse) {
+	w := getOutputWriter()
+
+	switch strings.ToLower(resp.Type) {
+	case "tabular":
+		switch outputFormat {
+		case "json":
+			renderTabularJSON(w, resp)
+		case "csv":
+			renderTabularDelimited(w, resp, ',')
+		case "tsv":
+			renderTabularDelimited(w, resp, '\t')
+		default:
+			if displayExpanded {
+				renderTabularExpanded(w, resp)
+				return
+			}
+			renderTabularTable(cmd, w, resp)
+		}
+	default:
+		renderTextResponse(w, resp)
+	}
+}
+
+func getOutputWriter() io.Writer {
 	w := outputWriter
 	if w == nil {
 		w = os.Stdout
 	}
+	return w
+}
 
-	if resp.Type == "tabular" {
-		if strings.EqualFold(outputFormat, "json") {
-			b, err := json.Marshal(resp.Data.Rows)
-			if err != nil {
-				fmt.Fprintf(w, "%v\n", err)
-				return
-			}
-			fmt.Fprintf(w, "%s\n", string(b))
-			fmt.Fprintf(w, "\n(%d rows, %d ms)\n", resp.Metadata.RowsAffected, resp.Metadata.DurationMs)
-			if resp.Metadata.Truncated {
-				fmt.Fprintln(w, "Warning: Results truncated to limit.")
-			}
-			return
-		}
-
-		if strings.EqualFold(outputFormat, "csv") || strings.EqualFold(outputFormat, "tsv") {
-			csvWriter := csv.NewWriter(w)
-			if strings.EqualFold(outputFormat, "tsv") {
-				csvWriter.Comma = '\t'
-			}
-			headers := make([]string, len(resp.Data.Columns))
-			for i, col := range resp.Data.Columns {
-				headers[i] = col.Name
-			}
-			_ = csvWriter.Write(headers)
-
-			for _, row := range resp.Data.Rows {
-				values := make([]string, len(resp.Data.Columns))
-				for i, col := range resp.Data.Columns {
-					cell := fmt.Sprintf("%v", row[col.Name])
-					cell = strings.ReplaceAll(cell, "\r\n", "\n")
-					values[i] = cell
-				}
-				_ = csvWriter.Write(values)
-			}
-			csvWriter.Flush()
-			if err := csvWriter.Error(); err != nil {
-				fmt.Fprintf(w, "%v\n", err)
-				return
-			}
-			fmt.Fprintf(w, "\n(%d rows, %d ms)\n", resp.Metadata.RowsAffected, resp.Metadata.DurationMs)
-			if resp.Metadata.Truncated {
-				fmt.Fprintln(w, "Warning: Results truncated to limit.")
-			}
-			return
-		}
-
-		if displayExpanded {
-			for rowIdx, row := range resp.Data.Rows {
-				if rowIdx > 0 {
-					fmt.Fprintln(w)
-				}
-				for _, col := range resp.Data.Columns {
-					cell := fmt.Sprintf("%v", row[col.Name])
-					cell = strings.ReplaceAll(cell, "\r\n", "\n")
-					cell = strings.ReplaceAll(cell, "\t", " ")
-					if !displayWide {
-						maxWidth := displayMaxColWidth
-						if col.Name == "query" || col.Name == "QUERY" {
-							maxWidth = displayMaxQueryWidth
-						}
-						cell = truncateWithEllipsisCell(strings.ReplaceAll(cell, "\n", " "), maxWidth)
-					}
-					fmt.Fprintf(w, "%s: %s\n", col.Name, cell)
-				}
-			}
-			fmt.Fprintf(w, "\n(%d rows, %d ms)\n", resp.Metadata.RowsAffected, resp.Metadata.DurationMs)
-			if resp.Metadata.Truncated {
-				fmt.Fprintln(w, "Warning: Results truncated to limit.")
-			}
-			return
-		}
-
-		table := tablewriter.NewWriter(w)
-		// Preserve column names exactly as returned by the backend (e.g. TABLE_NAME).
-		table.Options(tablewriter.WithConfig(tablewriter.Config{
-			Header: tw.CellConfig{
-				Formatting: tw.CellFormatting{AutoFormat: tw.Off},
-			},
-		}))
-
-		// Check for --plain flag
-		plain, _ := cmd.Flags().GetBool("plain")
-		if plain {
-			// Use ASCII symbols for perfect alignment in all terminals
-			table.Options(tablewriter.WithSymbols(&tw.SymbolASCII{}))
-		}
-
-		headers := make([]any, len(resp.Data.Columns))
-		for i, col := range resp.Data.Columns {
-			headers[i] = col.Name
-		}
-		table.Header(headers...)
-
-		for _, row := range resp.Data.Rows {
-			values := make([]any, len(resp.Data.Columns))
-			for i, col := range resp.Data.Columns {
-				cell := fmt.Sprintf("%v", row[col.Name])
-				isPlanTableOutput := strings.EqualFold(col.Name, "PLAN_TABLE_OUTPUT")
-				isQueryPlan := strings.EqualFold(col.Name, "QUERY PLAN") || strings.EqualFold(col.Name, "QUERY_PLAN")
-				if isPlanTableOutput || isQueryPlan {
-					cell = strings.ReplaceAll(cell, "\r\n", "\n")
-					cell = strings.ReplaceAll(cell, "\t", " ")
-				} else {
-					cell = strings.ReplaceAll(cell, "\r\n", " ")
-					cell = strings.ReplaceAll(cell, "\n", " ")
-					cell = strings.ReplaceAll(cell, "\t", " ")
-					if !displayWide {
-						maxWidth := displayMaxColWidth
-						if col.Name == "query" || col.Name == "QUERY" {
-							maxWidth = displayMaxQueryWidth
-						}
-						cell = truncateWithEllipsisCell(cell, maxWidth)
-					}
-				}
-				values[i] = cell
-			}
-			table.Append(values...)
-		}
-		table.Render()
-		fmt.Fprintf(w, "\n(%d rows, %d ms)\n", resp.Metadata.RowsAffected, resp.Metadata.DurationMs)
-		if resp.Metadata.Truncated {
-			fmt.Fprintln(w, "Warning: Results truncated to limit.")
-		}
-	} else {
-		fmt.Fprintln(w, resp.Data.TextContent)
-		fmt.Fprintf(w, "\n(%d ms)\n", resp.Metadata.DurationMs)
+func writeTabularFooter(w io.Writer, resp *client.ExecuteResponse) {
+	fmt.Fprintf(w, "\n(%d rows, %d ms)\n", resp.Metadata.RowsAffected, resp.Metadata.DurationMs)
+	if resp.Metadata.Truncated {
+		fmt.Fprintln(w, "Warning: Results truncated to limit.")
 	}
+}
+
+func renderTabularJSON(w io.Writer, resp *client.ExecuteResponse) {
+	b, err := json.Marshal(resp.Data.Rows)
+	if err != nil {
+		fmt.Fprintf(w, "%v\n", err)
+		return
+	}
+	fmt.Fprintf(w, "%s\n", string(b))
+	writeTabularFooter(w, resp)
+}
+
+func renderTabularDelimited(w io.Writer, resp *client.ExecuteResponse, comma rune) {
+	csvWriter := csv.NewWriter(w)
+	csvWriter.Comma = comma
+
+	headers := make([]string, len(resp.Data.Columns))
+	for i, col := range resp.Data.Columns {
+		headers[i] = col.Name
+	}
+	_ = csvWriter.Write(headers)
+
+	for _, row := range resp.Data.Rows {
+		values := make([]string, len(resp.Data.Columns))
+		for i, col := range resp.Data.Columns {
+			cell := fmt.Sprintf("%v", row[col.Name])
+			values[i] = normalizeCellForDelimited(cell)
+		}
+		_ = csvWriter.Write(values)
+	}
+
+	csvWriter.Flush()
+	if err := csvWriter.Error(); err != nil {
+		fmt.Fprintf(w, "%v\n", err)
+		return
+	}
+	writeTabularFooter(w, resp)
+}
+
+func normalizeCellForDelimited(cell string) string {
+	return strings.ReplaceAll(cell, "\r\n", "\n")
+}
+
+func renderTabularExpanded(w io.Writer, resp *client.ExecuteResponse) {
+	for rowIdx, row := range resp.Data.Rows {
+		if rowIdx > 0 {
+			fmt.Fprintln(w)
+		}
+		for _, col := range resp.Data.Columns {
+			cell := fmt.Sprintf("%v", row[col.Name])
+			cell = normalizeCellForExpanded(col.Name, cell)
+			fmt.Fprintf(w, "%s: %s\n", col.Name, cell)
+		}
+	}
+	writeTabularFooter(w, resp)
+}
+
+func normalizeCellForExpanded(colName string, cell string) string {
+	cell = strings.ReplaceAll(cell, "\r\n", "\n")
+	cell = strings.ReplaceAll(cell, "\t", " ")
+	if displayWide {
+		return cell
+	}
+
+	maxWidth := getMaxWidthForColumn(colName)
+	cell = truncateWithEllipsisCell(strings.ReplaceAll(cell, "\n", " "), maxWidth)
+	return cell
+}
+
+func renderTabularTable(cmd *cobra.Command, w io.Writer, resp *client.ExecuteResponse) {
+	table := tablewriter.NewWriter(w)
+	table.Options(tablewriter.WithConfig(tablewriter.Config{
+		Header: tw.CellConfig{
+			Formatting: tw.CellFormatting{AutoFormat: tw.Off},
+		},
+	}))
+
+	plain, _ := cmd.Flags().GetBool("plain")
+	if plain {
+		table.Options(tablewriter.WithSymbols(&tw.SymbolASCII{}))
+	}
+
+	headers := make([]any, len(resp.Data.Columns))
+	for i, col := range resp.Data.Columns {
+		headers[i] = col.Name
+	}
+	table.Header(headers...)
+
+	for _, row := range resp.Data.Rows {
+		values := make([]any, len(resp.Data.Columns))
+		for i, col := range resp.Data.Columns {
+			cell := fmt.Sprintf("%v", row[col.Name])
+			values[i] = normalizeCellForTable(col.Name, cell)
+		}
+		table.Append(values...)
+	}
+
+	table.Render()
+	writeTabularFooter(w, resp)
+}
+
+func normalizeCellForTable(colName string, cell string) string {
+	if isPlanLikeColumn(colName) {
+		cell = strings.ReplaceAll(cell, "\r\n", "\n")
+		cell = strings.ReplaceAll(cell, "\t", " ")
+		return cell
+	}
+
+	cell = strings.ReplaceAll(cell, "\r\n", " ")
+	cell = strings.ReplaceAll(cell, "\n", " ")
+	cell = strings.ReplaceAll(cell, "\t", " ")
+	if displayWide {
+		return cell
+	}
+
+	maxWidth := getMaxWidthForColumn(colName)
+	return truncateWithEllipsisCell(cell, maxWidth)
+}
+
+func isPlanLikeColumn(colName string) bool {
+	return strings.EqualFold(colName, "PLAN_TABLE_OUTPUT") ||
+		strings.EqualFold(colName, "QUERY PLAN") ||
+		strings.EqualFold(colName, "QUERY_PLAN")
+}
+
+func getMaxWidthForColumn(colName string) int {
+	if colName == "query" || colName == "QUERY" {
+		return displayMaxQueryWidth
+	}
+	return displayMaxColWidth
+}
+
+func renderTextResponse(w io.Writer, resp *client.ExecuteResponse) {
+	fmt.Fprintln(w, resp.Data.TextContent)
+	fmt.Fprintf(w, "\n(%d ms)\n", resp.Metadata.DurationMs)
 }
 
 func init() {
