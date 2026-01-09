@@ -83,6 +83,7 @@ type ExecuteOptions struct {
 
 type ExecuteResponse struct {
 	Type     string           `json:"type"`
+	Schema   string           `json:"schema"`
 	Data     DataContent      `json:"data"`
 	Metadata ResponseMetadata `json:"metadata"`
 }

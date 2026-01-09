@@ -7,6 +7,7 @@ import java.util.Map;
 @Data
 public class ExecuteResponse {
     private String type; // tabular | text | file
+    private String schema; // schema name for metadata queries (optional)
     private DataContent data;
     private Metadata metadata;
 

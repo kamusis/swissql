@@ -159,10 +159,15 @@ public class DatabaseService {
             }
 
             ExecuteResponse resp = queryTabular(session, sql, List.of(resolvedSchema.toUpperCase(), parsed.object.toUpperCase()), 0);
-            if (resp != null && resp.getData() != null && resp.getData().getRows() != null && resp.getData().getRows().isEmpty()) {
-                ParsedObjectName resolved = resolveOracleSynonym(session, resolvedSchema, parsed.object);
-                if (resolved != null && resolved.schema != null && !resolved.schema.isBlank()) {
-                    return queryTabular(session, sql, List.of(resolved.schema.toUpperCase(), resolved.object.toUpperCase()), 0);
+            if (resp != null && resp.getData() != null && resp.getData().getRows() != null && !resp.getData().getRows().isEmpty()) {
+                resp.setSchema(resolvedSchema.toUpperCase());
+                return resp;
+            }
+            ParsedObjectName resolved = resolveOracleSynonym(session, resolvedSchema, parsed.object);
+            if (resolved != null && resolved.schema != null && !resolved.schema.isBlank()) {
+                resp = queryTabular(session, sql, List.of(resolved.schema.toUpperCase(), resolved.object.toUpperCase()), 0);
+                if (resp != null && resp.getData() != null && resp.getData().getRows() != null && !resp.getData().getRows().isEmpty()) {
+                    resp.setSchema(resolved.schema.toUpperCase());
                 }
             }
             return resp;
@@ -203,7 +208,21 @@ public class DatabaseService {
                         + "WHERE table_schema = ? AND table_name = ? "
                         + "ORDER BY ordinal_position";
             }
-            return queryTabular(session, sql, List.of(resolvedSchema.toLowerCase(), parsed.object.toLowerCase()), 0);
+            ExecuteResponse resp = queryTabular(session, sql, List.of(resolvedSchema.toLowerCase(), parsed.object.toLowerCase()), 0);
+            if (resp != null && resp.getData() != null && resp.getData().getRows() != null && !resp.getData().getRows().isEmpty()) {
+                resp.setSchema(resolvedSchema.toLowerCase());
+                return resp;
+            }
+            resp = queryTabular(session, sql, List.of("pg_catalog", parsed.object.toLowerCase()), 0);
+            if (resp != null && resp.getData() != null && resp.getData().getRows() != null && !resp.getData().getRows().isEmpty()) {
+                resp.setSchema("pg_catalog");
+                return resp;
+            }
+            resp = queryTabular(session, sql, List.of("information_schema", parsed.object.toLowerCase()), 0);
+            if (resp != null) {
+                resp.setSchema("information_schema");
+            }
+            return resp;
         }
 
         return buildUnsupportedMetaResponse("meta/describe", dbType);

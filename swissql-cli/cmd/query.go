@@ -283,7 +283,11 @@ func shouldForcePlainBorders(cmd *cobra.Command, paging bool) bool {
 }
 
 func writeTabularFooter(w io.Writer, resp *client.ExecuteResponse) {
-	fmt.Fprintf(w, "\n(%d rows, %d ms)\n", resp.Metadata.RowsAffected, resp.Metadata.DurationMs)
+	if resp.Schema != "" && resp.Schema != "<nil>" {
+		fmt.Fprintf(w, "\n(%d rows, %d ms, schema: %s)\n", resp.Metadata.RowsAffected, resp.Metadata.DurationMs, resp.Schema)
+	} else {
+		fmt.Fprintf(w, "\n(%d rows, %d ms)\n", resp.Metadata.RowsAffected, resp.Metadata.DurationMs)
+	}
 	if resp.Metadata.Truncated {
 		fmt.Fprintln(w, "Warning: Results truncated to limit.")
 	}
