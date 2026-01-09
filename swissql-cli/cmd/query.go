@@ -1,19 +1,24 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 
 	"github.com/kamusis/swissql/swissql-cli/internal/client"
 	"github.com/kamusis/swissql/swissql-cli/internal/config"
+	"github.com/mattn/go-isatty"
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var displayWide bool
@@ -118,7 +123,38 @@ func parseDisplayWidthArg(s string) (int, error) {
 
 func renderResponse(cmd *cobra.Command, resp *client.ExecuteResponse) {
 	w := getOutputWriter()
+	plainFlag, _ := cmd.Flags().GetBool("plain")
 
+	// Fast path: non-paging targets (pipes, redirects, files)
+	if !shouldPageOutput(w) {
+		renderResponseToWriter(cmd, w, resp, shouldForcePlainBorders(cmd, false))
+		return
+	}
+
+	// Paging-eligible path: render once, then decide if paging is needed.
+	buf := new(bytes.Buffer)
+	renderResponseToWriter(cmd, buf, resp, plainFlag)
+
+	if !needsPaging(buf.Bytes()) {
+		// Lines fit on screen; keep the original border style.
+		_, _ = os.Stdout.Write(buf.Bytes())
+		return
+	}
+
+	// Paging will be used; decide whether to force ASCII borders (Windows).
+	usePlain := shouldForcePlainBorders(cmd, true)
+	if usePlain != plainFlag {
+		buf.Reset()
+		renderResponseToWriter(cmd, buf, resp, usePlain)
+	}
+
+	if err := pageOrWriteStdout(buf.Bytes()); err != nil {
+		// If pager fails, fall back to writing directly.
+		_, _ = os.Stdout.Write(buf.Bytes())
+	}
+}
+
+func renderResponseToWriter(cmd *cobra.Command, w io.Writer, resp *client.ExecuteResponse, usePlain bool) {
 	switch strings.ToLower(resp.Type) {
 	case "tabular":
 		switch outputFormat {
@@ -133,7 +169,7 @@ func renderResponse(cmd *cobra.Command, resp *client.ExecuteResponse) {
 				renderTabularExpanded(w, resp)
 				return
 			}
-			renderTabularTable(cmd, w, resp)
+			renderTabularTable(cmd, w, resp, usePlain)
 		}
 	default:
 		renderTextResponse(w, resp)
@@ -146,6 +182,104 @@ func getOutputWriter() io.Writer {
 		w = os.Stdout
 	}
 	return w
+}
+
+// shouldPageOutput returns true only when we are writing to a terminal (TTY)
+// and the output target is stdout (not redirected via \o to a file).
+func shouldPageOutput(w io.Writer) bool {
+	if outputFile != nil {
+		return false
+	}
+	if w != os.Stdout {
+		return false
+	}
+	return isatty.IsTerminal(os.Stdout.Fd())
+}
+
+// needsPaging checks if rendered output exceeds current terminal height.
+func needsPaging(b []byte) bool {
+	if len(b) == 0 {
+		return false
+	}
+	_, height, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || height <= 0 {
+		return false
+	}
+	return countLines(b) > height
+}
+
+// pageOrWriteStdout pages output when it exceeds the terminal height.
+// Fallback order: $PAGER -> less -> (windows) more -> plain stdout.
+func pageOrWriteStdout(b []byte) error {
+	_, height, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || height <= 0 {
+		_, _ = os.Stdout.Write(b)
+		return nil
+	}
+	if countLines(b) <= height {
+		_, _ = os.Stdout.Write(b)
+		return nil
+	}
+
+	name, args := selectPagerCommand()
+	if strings.TrimSpace(name) == "" {
+		_, _ = os.Stdout.Write(b)
+		return nil
+	}
+
+	cmd := exec.Command(name, args...)
+	cmd.Stdin = bytes.NewReader(b)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	// Ensure less renders UTF-8 correctly (especially on Windows Git Bash).
+	cmd.Env = append(os.Environ(), "LESSCHARSET=utf-8")
+	return cmd.Run()
+}
+
+func countLines(b []byte) int {
+	if len(b) == 0 {
+		return 0
+	}
+	return bytes.Count(b, []byte("\n")) + 1
+}
+
+func selectPagerCommand() (string, []string) {
+	if pager := strings.TrimSpace(os.Getenv("PAGER")); pager != "" {
+		fields := strings.Fields(pager)
+		if len(fields) > 0 {
+			if _, err := exec.LookPath(fields[0]); err == nil {
+				return fields[0], fields[1:]
+			}
+		}
+	}
+	if _, err := exec.LookPath("less"); err == nil {
+		// -F: quit if output fits on one screen
+		// -R: display raw control chars (keeps ANSI colors)
+		// -S: chop long lines instead of wrapping
+		// -X: do not clear the screen on exit
+		return "less", []string{"-FRSX"}
+	}
+	if runtime.GOOS == "windows" {
+		if _, err := exec.LookPath("more"); err == nil {
+			return "more", nil
+		}
+	}
+	return "", nil
+}
+
+// shouldForcePlainBorders decides when to render ASCII borders instead of
+// Unicode box-drawing. We force plain when:
+// - user explicitly set --plain, or
+// - paging is active on Windows (less/more often render Unicode poorly).
+func shouldForcePlainBorders(cmd *cobra.Command, paging bool) bool {
+	plainFlag, _ := cmd.Flags().GetBool("plain")
+	if plainFlag {
+		return true
+	}
+	if paging && runtime.GOOS == "windows" {
+		return true
+	}
+	return false
 }
 
 func writeTabularFooter(w io.Writer, resp *client.ExecuteResponse) {
@@ -222,7 +356,7 @@ func normalizeCellForExpanded(colName string, cell string) string {
 	return cell
 }
 
-func renderTabularTable(cmd *cobra.Command, w io.Writer, resp *client.ExecuteResponse) {
+func renderTabularTable(cmd *cobra.Command, w io.Writer, resp *client.ExecuteResponse, forcePlain bool) {
 	table := tablewriter.NewWriter(w)
 	table.Options(tablewriter.WithConfig(tablewriter.Config{
 		Header: tw.CellConfig{
@@ -230,8 +364,8 @@ func renderTabularTable(cmd *cobra.Command, w io.Writer, resp *client.ExecuteRes
 		},
 	}))
 
-	plain, _ := cmd.Flags().GetBool("plain")
-	if plain {
+	plainFlag, _ := cmd.Flags().GetBool("plain")
+	if forcePlain || plainFlag {
 		table.Options(tablewriter.WithSymbols(&tw.SymbolASCII{}))
 	}
 

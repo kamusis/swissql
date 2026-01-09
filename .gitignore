@@ -28,6 +28,7 @@
 
 # Go build output in this repo
 /swissql-cli/swissql.exe
+/swissql-cli/swissql
 
 # IDEs
 /.idea/
