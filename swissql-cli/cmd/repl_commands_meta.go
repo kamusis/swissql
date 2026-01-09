@@ -156,6 +156,70 @@ func handleReplMetaCommands(
 		}
 		renderResponse(cmd, resp)
 		return true
+
+	case cmdLower == "\\sqltext":
+		if shouldRecordHistory(historyMode, input, false) {
+			line.AppendHistory(input)
+		}
+		if len(args) < 1 {
+			fmt.Println("Usage: \\sqltext <sql_id>")
+			return true
+		}
+		sqlId := args[0]
+		sqlText, err := c.GetSqlText(sessionId, sqlId)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			return true
+		}
+		resp := &client.ExecuteResponse{
+			Type:   "tabular",
+			Schema: "",
+			Data: client.DataContent{
+				Columns: []client.ColumnDefinition{
+					{Name: "sql_id", Type: "text"},
+					{Name: "text", Type: "text"},
+					{Name: "truncated", Type: "bool"},
+				},
+				Rows: []map[string]interface{}{
+					{
+						"sql_id":    sqlText.SqlId,
+						"text":      sqlText.Text,
+						"truncated": sqlText.Truncated,
+					},
+				},
+			},
+			Metadata: client.ResponseMetadata{
+				DurationMs:   0,
+				RowsAffected: 1,
+				Truncated:    false,
+			},
+		}
+		renderResponse(cmd, resp)
+		return true
+
+	case cmdLower == "\\plan":
+		if shouldRecordHistory(historyMode, input, false) {
+			line.AppendHistory(input)
+		}
+		if len(args) < 1 {
+			fmt.Println("Usage: \\plan <sql_id>")
+			return true
+		}
+		sqlId := args[0]
+		// Fetch SQL text first
+		sqlText, err := c.GetSqlText(sessionId, sqlId)
+		if err != nil {
+			fmt.Printf("Error fetching SQL text: %v\n", err)
+			return true
+		}
+		// Get execution plan using existing MetaExplain
+		resp, err := c.MetaExplain(sessionId, sqlText.Text, false)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			return true
+		}
+		renderResponse(cmd, resp)
+		return true
 	}
 
 	return false

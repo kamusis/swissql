@@ -3,11 +3,16 @@ package com.swissql.controller;
 import com.swissql.api.*;
 import com.swissql.driver.DriverRegistry;
 import com.swissql.driver.JdbcDriverAutoLoader;
+import com.swissql.model.TopSnapshot;
 import com.swissql.service.AiContextService;
 import com.swissql.service.AiSqlGenerateService;
 import com.swissql.service.DatabaseService;
 import com.swissql.service.SessionManager;
+import com.swissql.sampler.SamplerConfig;
+import com.swissql.sampler.SamplerManager;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -23,12 +28,15 @@ import java.util.UUID;
 @RequestMapping("/v1")
 public class SwissQLController {
 
+    private static final Logger log = LoggerFactory.getLogger(SwissQLController.class);
+
     private final SessionManager sessionManager;
     private final DatabaseService databaseService;
     private final AiSqlGenerateService aiSqlGenerateService;
     private final AiContextService aiContextService;
     private final DriverRegistry driverRegistry;
     private final JdbcDriverAutoLoader jdbcDriverAutoLoader;
+    private final SamplerManager samplerManager;
 
     public SwissQLController(
             SessionManager sessionManager,
@@ -36,7 +44,8 @@ public class SwissQLController {
             AiSqlGenerateService aiSqlGenerateService,
             AiContextService aiContextService,
             DriverRegistry driverRegistry,
-            JdbcDriverAutoLoader jdbcDriverAutoLoader
+            JdbcDriverAutoLoader jdbcDriverAutoLoader,
+            SamplerManager samplerManager
     ) {
         this.sessionManager = sessionManager;
         this.databaseService = databaseService;
@@ -44,6 +53,7 @@ public class SwissQLController {
         this.aiContextService = aiContextService;
         this.driverRegistry = driverRegistry;
         this.jdbcDriverAutoLoader = jdbcDriverAutoLoader;
+        this.samplerManager = samplerManager;
     }
 
     /**
@@ -60,6 +70,7 @@ public class SwissQLController {
         try {
             sessionInfo = sessionManager.createSession(request);
             databaseService.initializeSession(sessionInfo);
+            samplerManager.startSampler(sessionInfo.getSessionId());
             ConnectResponse response = ConnectResponse.builder()
                     .sessionId(sessionInfo.getSessionId())
                     .traceId(MDC.get("trace_id"))
@@ -68,6 +79,10 @@ public class SwissQLController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             if (sessionInfo != null && sessionInfo.getSessionId() != null) {
+                try {
+                    samplerManager.stopSampler(sessionInfo.getSessionId());
+                } catch (Exception ignored) {
+                }
                 try {
                     databaseService.closeSession(sessionInfo.getSessionId());
                 } catch (Exception ignored) {
@@ -94,6 +109,7 @@ public class SwissQLController {
      */
     @PostMapping("/disconnect")
     public ResponseEntity<Void> disconnect(@RequestParam("session_id") String sessionId) {
+        samplerManager.stopSampler(sessionId);
         sessionManager.terminateSession(sessionId);
         databaseService.closeSession(sessionId);
         aiContextService.clear(sessionId);
@@ -456,5 +472,166 @@ public class SwissQLController {
     @GetMapping("/status")
     public ResponseEntity<Map<String, String>> getStatus() {
         return ResponseEntity.ok(Map.of("status", "UP"));
+    }
+
+    /**
+     * Get top performance snapshot.
+     *
+     * GET /v1/top/snapshot
+     */
+    @GetMapping("/top/snapshot")
+    public ResponseEntity<?> getTopSnapshot(@RequestParam("session_id") String sessionId) {
+        var sessionInfoOpt = sessionManager.getSession(sessionId);
+        if (sessionInfoOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(ErrorResponse.builder()
+                    .code("SESSION_EXPIRED")
+                    .message("Session missing or expired")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        TopSnapshot snapshot = samplerManager.getSnapshot(sessionId);
+        if (snapshot == null) {
+            return ResponseEntity.status(404).body(ErrorResponse.builder()
+                    .code("SAMPLER_NOT_FOUND")
+                    .message("Sampler not started for this session")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        // log.debug("Returning snapshot with topSessions size: {}", snapshot.getTopSessions() != null ? snapshot.getTopSessions().size() : 0);
+        return ResponseEntity.ok(snapshot);
+    }
+
+    /**
+     * Get SQL text by ID.
+     *
+     * GET /v1/meta/sqltext
+     */
+    @GetMapping("/meta/sqltext")
+    public ResponseEntity<?> getSqlText(
+            @RequestParam("session_id") String sessionId,
+            @RequestParam("sql_id") String sqlId
+    ) {
+        var sessionInfoOpt = sessionManager.getSession(sessionId);
+        if (sessionInfoOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(ErrorResponse.builder()
+                    .code("SESSION_EXPIRED")
+                    .message("Session missing or expired")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        try {
+            var sessionInfo = sessionInfoOpt.get();
+            var collectorConfig = samplerManager.getCollectorRegistry().getConfig(
+                    databaseService.getConnection(sessionInfo), sessionInfo.getDbType());
+
+            if (collectorConfig == null || collectorConfig.getCollectors() == null) {
+                return ResponseEntity.status(404).body(ErrorResponse.builder()
+                        .code("COLLECTOR_NOT_FOUND")
+                        .message("Collector configuration not found")
+                        .traceId(MDC.get("trace_id"))
+                        .build());
+            }
+
+            var sqltextCollector = collectorConfig.getCollectors().get("sqltext");
+            if (sqltextCollector == null || sqltextCollector.getQueries() == null) {
+                return ResponseEntity.status(404).body(ErrorResponse.builder()
+                        .code("SQLTEXT_COLLECTOR_NOT_FOUND")
+                        .message("SQL text collector not found")
+                        .traceId(MDC.get("trace_id"))
+                        .build());
+            }
+
+            var query = sqltextCollector.getQueries().get("by_id");
+            if (query == null) {
+                return ResponseEntity.status(404).body(ErrorResponse.builder()
+                        .code("SQLTEXT_QUERY_NOT_FOUND")
+                        .message("SQL text query not found")
+                        .traceId(MDC.get("trace_id"))
+                        .build());
+            }
+
+            var sql = query.getSql();
+            if (sql.contains(":sql_id")) {
+                sql = sql.replace(":sql_id", "?");
+            }
+
+            try (var conn = databaseService.getConnection(sessionInfo);
+                 var stmt = conn.prepareStatement(sql)) {
+
+                stmt.setString(1, sqlId);
+                try (var rs = stmt.executeQuery()) {
+
+                    if (rs.next()) {
+                        String fullText = rs.getString("sql_fulltext");
+                        String shortText = rs.getString("sql_text");
+                        String text = fullText != null ? fullText : shortText;
+                        boolean truncated = fullText == null;
+
+                        return ResponseEntity.ok(SqlTextResponse.builder()
+                                .sqlId(sqlId)
+                                .text(text)
+                                .truncated(truncated)
+                                .build());
+                    } else {
+                        return ResponseEntity.status(404).body(ErrorResponse.builder()
+                                .code("SQL_NOT_FOUND")
+                                .message("SQL not found: " + sqlId)
+                                .traceId(MDC.get("trace_id"))
+                                .build());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(ErrorResponse.builder()
+                    .code("EXECUTION_ERROR")
+                    .message(e.getMessage())
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+    }
+
+    /**
+     * Update top sampler configuration.
+     *
+     * POST /v1/top/config
+     */
+    @PostMapping("/top/config")
+    public ResponseEntity<?> updateTopConfig(@Valid @RequestBody TopConfigRequest request) {
+        var sessionInfoOpt = sessionManager.getSession(request.getSessionId());
+        if (sessionInfoOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(ErrorResponse.builder()
+                    .code("SESSION_EXPIRED")
+                    .message("Session missing or expired")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        try {
+            SamplerConfig config = SamplerConfig.builder()
+                    .intervalSec(request.getIntervalSec())
+                    .enableTopSql(request.getEnableTopSql())
+                    .enableTopSessions(request.getEnableTopSessions())
+                    .maxItems(request.getMaxItems())
+                    .build();
+
+            samplerManager.updateConfig(request.getSessionId(), config);
+
+            return ResponseEntity.ok(TopConfigResponse.builder()
+                    .message("Configuration updated successfully")
+                    .intervalSec(config.getIntervalSec())
+                    .enableTopSql(config.getEnableTopSql())
+                    .enableTopSessions(config.getEnableTopSessions())
+                    .maxItems(config.getMaxItems())
+                    .build());
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(ErrorResponse.builder()
+                    .code("CONFIG_UPDATE_FAILED")
+                    .message(e.getMessage())
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
     }
 }

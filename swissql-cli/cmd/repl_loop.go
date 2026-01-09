@@ -177,13 +177,23 @@ func runRepl(cmd *cobra.Command, args []string) error {
 
 		// Phase 3 P0 meta-commands (single-line)
 		if isMetaCommandStart(input) {
+			cmdName, args := parseMetaCommand(input)
+
+			// Check if it's a watch command (can run without session)
+			if handleReplWatch(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId, cfg) {
+				continue
+			}
+
 			if strings.TrimSpace(sessionId) == "" {
 				fmt.Println("Error: no active DB session. Use 'connect <dsn>' first.")
 				continue
 			}
-			cmdName, args := parseMetaCommand(input)
 
 			if handleReplMetaCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId, cfg) {
+				continue
+			}
+
+			if handleReplTopCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId, cfg) {
 				continue
 			}
 

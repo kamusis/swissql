@@ -694,6 +694,10 @@ public class DatabaseService {
         });
     }
 
+    public Connection getConnection(SessionInfo session) throws SQLException {
+        return getDataSource(session).getConnection();
+    }
+
     private ExecuteResponse queryTabular(SessionInfo session, String sql, List<Object> params, int limit) throws SQLException {
         DataSource ds = getDataSource(session);
         long startTime = System.currentTimeMillis();

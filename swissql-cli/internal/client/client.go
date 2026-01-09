@@ -596,3 +596,60 @@ func (c *Client) get(urlStr string) (io.ReadCloser, error) {
 
 	return resp.Body, nil
 }
+
+// TopSnapshot represents the top performance metrics snapshot
+type TopSnapshot struct {
+	DbType      string       `json:"dbType"`
+	IntervalSec int          `json:"intervalSec"`
+	Context     OrderedMap   `json:"context"`
+	Cpu         OrderedMap   `json:"cpu"`
+	Sessions    OrderedMap   `json:"sessions"`
+	Waits       []OrderedMap `json:"waits"`
+	TopSessions []OrderedMap `json:"topSessions"`
+	Io          OrderedMap   `json:"io"`
+}
+
+// GetTopSnapshot retrieves the top performance snapshot
+func (c *Client) GetTopSnapshot(sessionId string) (*TopSnapshot, error) {
+	url := fmt.Sprintf("%s/v1/top/snapshot?session_id=%s", c.BaseURL, url.QueryEscape(sessionId))
+	body, err := c.get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var snapshot TopSnapshot
+	if err := json.NewDecoder(body).Decode(&snapshot); err != nil {
+		return nil, fmt.Errorf("failed to decode snapshot: %w", err)
+	}
+
+	// Debug log
+	// fmt.Fprintf(os.Stderr, "DEBUG: Received snapshot with topSessions size: %d\n", len(snapshot.TopSessions))
+
+	return &snapshot, nil
+}
+
+// SqlTextResponse represents the SQL text response
+type SqlTextResponse struct {
+	SqlId     string `json:"sqlId"`
+	Text      string `json:"text"`
+	Truncated bool   `json:"truncated"`
+}
+
+// GetSqlText retrieves SQL text by ID
+func (c *Client) GetSqlText(sessionId, sqlId string) (*SqlTextResponse, error) {
+	url := fmt.Sprintf("%s/v1/meta/sqltext?session_id=%s&sql_id=%s",
+		c.BaseURL, url.QueryEscape(sessionId), url.QueryEscape(sqlId))
+	body, err := c.get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var response SqlTextResponse
+	if err := json.NewDecoder(body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode sql text: %w", err)
+	}
+
+	return &response, nil
+}

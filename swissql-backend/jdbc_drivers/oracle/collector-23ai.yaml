@@ -1,0 +1,283 @@
+dbType: oracle
+supportedVersions:
+  min: "12.0.0.0.0"
+  max: "23.99.99.99.99"
+description: Oracle 23ai database collectors configuration
+collectors:
+  top:
+    description: Top performance metrics using 4-layer model (Context, Resource, Wait, Load Attribution)
+    layers:
+      context:
+        description: L0 Context - Database version, topology, role, uptime
+        sql: |
+          SELECT 
+            version AS "dbVersion",
+            (sysdate - startup_time) * 86400 AS "uptimeSec",
+            instance_name AS "instance",
+            instance_role AS "role",
+            status AS "status",
+            database_type AS "dbType"
+          FROM v$instance
+        singleRow: true
+      cpu:
+        description: L1 Resource - CPU metrics
+        sql: |
+          SELECT 
+            ROUND((SELECT value FROM v$sysstat WHERE name = 'CPU used by this session') / 1000000, 2) "dbCpuSec",
+            ROUND((SELECT value FROM v$sysstat WHERE name = 'OS CPU Qt wait time') / 1000000, 2) "cpuWaitSec"
+          FROM dual
+        singleRow: true
+      sessions:
+        description: L1/L3 - Session metrics
+        sql: |
+          SELECT COUNT(*) AS total, 
+                 SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active, 
+                 SUM(CASE WHEN status = 'ACTIVE' AND wait_class = 'CPU' THEN 1 ELSE 0 END) AS running, 
+                 SUM(CASE WHEN status = 'ACTIVE' AND wait_class != 'CPU' THEN 1 ELSE 0 END) AS waiting 
+          FROM v$session 
+          WHERE type = 'USER'
+        singleRow: true
+      waits:
+        description: L2 Wait - Top wait events
+        sql: |
+          SELECT wait_class "class", 
+                 event "name", 
+                 total_waits "count", 
+                 ROUND(time_waited / 1000, 2) "timeMs", 
+                 ROUND(AVERAGE_WAIT / 1000, 2) "avgMs" 
+          FROM v$system_event 
+          WHERE wait_class != 'Idle' 
+          ORDER BY time_waited DESC 
+          FETCH FIRST 10 ROWS ONLY
+        singleRow: false
+      topSessions:
+        description: L3 Load Attribution - Top active sessions by duration
+        sql: |
+          SELECT 
+            s.sid,
+            s.serial#,
+            s.username,
+            s.program,
+            s.status,
+            s.wait_class,
+            NVL(s.event, 'ON CPU') "event",
+            ROUND((SYSDATE - s.logon_time) * 86400, 0) "duration_sec",
+            NVL(s.sql_id, 'N/A') "sql_id"
+          FROM v$session s
+          WHERE s.type = 'USER' AND s.status = 'ACTIVE'
+          ORDER BY s.logon_time
+          FETCH FIRST 10 ROWS ONLY
+        singleRow: false
+      io:
+        description: L1 Resource - I/O metrics
+        sql: |
+          SELECT ROUND(SUM(phyrds) / 10, 2) "readIops", 
+                 ROUND(SUM(phywrts) / 10, 2) "writeIops", 
+                 SUM(phyblkrd * p.value) "readBytes", 
+                 SUM(phyblkwrt * p.value) "writeBytes", 
+                 ROUND(AVG(readtim) / 10, 2) "readLatencyMs", 
+                 ROUND(AVG(writetim) / 10, 2) "writeLatencyMs" 
+          FROM v$filestat f, v$parameter p 
+          WHERE p.name = 'db_block_size'
+        singleRow: true
+  sqltext:
+    description: SQL text retrieval for explain plans
+    queries:
+      by_id:
+        description: Get SQL text by SQL ID
+        sql: |
+          SELECT sql_id, sql_text, sql_fulltext 
+          FROM v$sql 
+          WHERE sql_id = :sql_id
+        singleRow: true
+        parameters:
+          - sql_id
+  perf:
+    description: Performance diagnostics metrics (future use)
+    queries:
+      active_transactions:
+        description: Active transactions
+        sql: |
+          SELECT t.xidusn "xid", 
+                 s.sid, 
+                 s.serial#, 
+                 s.username, 
+                 t.start_time 
+          FROM v$transaction t, v$session s 
+          WHERE t.ses_addr = s.saddr 
+          ORDER BY t.start_time
+        singleRow: false
+      locks:
+        description: Current locks
+        sql: |
+          SELECT l.session_id "sid", 
+                 s.serial#, 
+                 s.username, 
+                 l.locked_mode, 
+                 o.object_type, 
+                 o.object_name 
+          FROM v$locked_object l, dba_objects o, v$session s 
+          WHERE l.object_id = o.object_id 
+          AND l.session_id = s.sid 
+          ORDER BY l.locked_mode DESC
+        singleRow: false
+      tablespaces:
+        description: Tablespace usage
+        sql: |
+          SELECT t.tablespace_name, 
+                 ROUND(t.bytes / 1024 / 1024 / 1024, 2) "size_gb", 
+                 ROUND(f.bytes / 1024 / 1024 / 1024, 2) "free_gb", 
+                 ROUND((t.bytes - f.bytes) / t.bytes * 100, 2) "used_percent" 
+          FROM (SELECT tablespace_name, SUM(bytes) bytes FROM dba_data_files GROUP BY tablespace_name) t 
+          LEFT OUTER JOIN (SELECT tablespace_name, SUM(bytes) bytes FROM dba_free_space GROUP BY tablespace_name) f 
+          ON t.tablespace_name = f.tablespace_name
+        singleRow: false
+  memory:
+    description: Memory and SGA/PGA allocation metrics
+    queries:
+      sga_allocation:
+        description: SGA pool allocation
+        sql: |
+          SELECT 
+            ROUND(SUM(CASE WHEN pool='shared pool' THEN bytes ELSE 0 END)/1024/1024, 2) "shared_pool_mb",
+            ROUND(SUM(CASE WHEN pool='buffer cache' THEN bytes ELSE 0 END)/1024/1024, 2) "buffer_cache_mb",
+            ROUND(SUM(CASE WHEN pool='log buffer' THEN bytes ELSE 0 END)/1024/1024, 2) "log_buffer_mb",
+            ROUND(SUM(CASE WHEN pool='java pool' THEN bytes ELSE 0 END)/1024/1024, 2) "java_pool_mb",
+            ROUND(SUM(bytes)/1024/1024, 2) "total_sga_mb"
+          FROM v$sgastat
+        singleRow: true
+      cache_hit_ratio:
+        description: Buffer cache hit ratio
+        sql: |
+          SELECT 
+            ROUND(100 * SUM(CASE WHEN name = 'consistent gets' THEN value ELSE 0 END) / 
+              (SUM(CASE WHEN name = 'consistent gets' THEN value ELSE 0 END) + 
+               SUM(CASE WHEN name = 'physical reads' THEN value ELSE 0 END)), 2) "hit_ratio_pct",
+            ROUND(SUM(CASE WHEN name = 'physical reads' THEN value ELSE 0 END), 0) "physical_reads",
+            ROUND(SUM(CASE WHEN name = 'physical writes' THEN value ELSE 0 END), 0) "physical_writes",
+            ROUND(SUM(CASE WHEN name = 'consistent gets' THEN value ELSE 0 END), 0) "logical_reads"
+          FROM v$sysstat
+          WHERE name IN ('consistent gets', 'physical reads', 'physical writes')
+        singleRow: true
+  sessions:
+    description: Session and user activity analysis
+    queries:
+      long_running_sessions:
+        description: Sessions running for extended duration
+        sql: |
+          SELECT 
+            s.sid,
+            s.serial#,
+            s.username,
+            s.status,
+            ROUND((SYSDATE - s.logon_time) * 1440, 0) "duration_min",
+            NVL(s.event, 'ON CPU') "current_event",
+            s.wait_class
+          FROM v$session s
+          WHERE s.type = 'USER'
+          ORDER BY s.logon_time
+          FETCH FIRST 10 ROWS ONLY
+        singleRow: false
+  sql_analytics:
+    description: Advanced SQL analytics and efficiency metrics
+    queries:
+      top_sql_by_elapsed:
+        description: Top SQL by elapsed time
+        sql: |
+          SELECT 
+            sql_id "id", 
+            executions "calls", 
+            ROUND(elapsed_time / 1000, 2) "elapsedMs", 
+            ROUND(cpu_time / 1000, 2) "cpuMs", 
+            rows_processed "rows", 
+            ROUND(disk_reads * 8 / 1024 / 1024, 2) "ioReadMB", 
+            ROUND(direct_writes * 8 / 1024 / 1024, 2) "ioWriteMB" 
+          FROM v$sql 
+          WHERE elapsed_time > 0 
+          ORDER BY elapsed_time DESC 
+          FETCH FIRST 20 ROWS ONLY
+        singleRow: false
+      top_sql_by_io:
+        description: Top SQL by physical I/O operations
+        sql: |
+          SELECT 
+            sql_id "id",
+            SUBSTR(sql_text, 1, 100) "sql_text",
+            executions "execs",
+            disk_reads "phys_reads",
+            ROUND(disk_reads / DECODE(executions, 0, 1, executions), 2) "reads_per_exec",
+            ROUND(disk_reads * 8 / 1024, 2) "read_mb"
+          FROM v$sql
+          WHERE disk_reads > 0
+          ORDER BY disk_reads DESC
+          FETCH FIRST 10 ROWS ONLY
+        singleRow: false
+      frequent_parse_sql:
+        description: SQL with high parse frequency
+        sql: |
+          SELECT 
+            sql_id "id",
+            SUBSTR(sql_text, 1, 100) "sql_text",
+            parse_calls "parse_count",
+            executions "exec_count",
+            DECODE(executions, 0, parse_calls, ROUND(parse_calls / executions * 100, 2)) "parse_overhead_pct"
+          FROM v$sql
+          WHERE executions > 0 AND parse_calls > 0
+          ORDER BY parse_calls DESC
+          FETCH FIRST 10 ROWS ONLY
+        singleRow: false
+      inefficient_sql:
+        description: SQL with high parse ratio
+        sql: |
+          SELECT 
+            sql_id "id",
+            SUBSTR(sql_text, 1, 100) "sql_text",
+            executions "calls",
+            rows_processed "rows",
+            ROUND(rows_processed / DECODE(executions, 0, 1, executions), 2) "rows_per_exec"
+          FROM v$sql
+          WHERE rows_processed > 0 AND executions > 0
+          ORDER BY executions DESC
+          FETCH FIRST 10 ROWS ONLY
+        singleRow: false
+  infrastructure:
+    description: Database infrastructure and storage metrics
+    queries:
+      redo_log_info:
+        description: Redo log groups and archival status
+        sql: |
+          SELECT 
+            GROUP# "group",
+            THREAD# "thread",
+            SEQUENCE# "sequence",
+            BYTES/1024/1024 "size_mb",
+            MEMBERS,
+            STATUS,
+            ARCHIVED
+          FROM v$log
+          ORDER BY GROUP#
+        singleRow: false
+      database_file_growth:
+        description: Database file allocation and growth metrics
+        sql: |
+          SELECT 
+            ROUND(SUM(bytes) / 1024 / 1024 / 1024, 2) "total_allocated_gb",
+            COUNT(*) "file_count",
+            ROUND(AVG(bytes) / 1024 / 1024, 2) "avg_file_size_mb",
+            ROUND(MAX(bytes) / 1024 / 1024, 2) "max_file_size_mb",
+            ROUND(MIN(bytes) / 1024 / 1024, 2) "min_file_size_mb"
+          FROM dba_data_files
+        singleRow: true
+      critical_parameters:
+        description: Key database configuration parameters
+        sql: |
+          SELECT 
+            name "parameter",
+            DECODE(type, 1, 'boolean', 2, 'string', 3, 'integer', 4, 'file', 'unknown') "type",
+            value "current_value",
+            default_value "default_value",
+            DECODE(isdefault, 'TRUE', 'Yes', 'No') "is_default"
+          FROM v$parameter
+          WHERE name IN ('sga_target', 'pga_aggregate_target', 'processes', 'open_cursors', 'db_recovery_file_dest_size', 'audit_trail')
+          ORDER BY name
+        singleRow: false

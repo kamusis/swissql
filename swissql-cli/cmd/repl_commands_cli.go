@@ -1,8 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/kamusis/swissql/swissql-cli/internal/client"
 	"github.com/kamusis/swissql/swissql-cli/internal/config"
@@ -42,6 +47,10 @@ func handleReplHelp(line *liner.State, historyMode string, input string) bool {
 	fmt.Println("  \\dt | \\dv                     List tables/views")
 	fmt.Println("  \\explain <sql>                Show execution plan (alias: explain, explain plan for)")
 	fmt.Println("  \\explain analyze <sql>        Show actual execution plan (executes the statement) (alias: explain analyze)")
+	fmt.Println("  \\sqltext <sql_id>             Get SQL text by ID")
+	fmt.Println("  \\plan <sql_id>               Get execution plan for SQL by ID")
+	fmt.Println("  \\top                          Show top performance metrics")
+	fmt.Println("  \\watch <command>             Repeatedly execute a command (e.g., \\watch \\top)")
 	fmt.Println("  \\i <file>                     Execute statements from a file (alias: @<file>)")
 	fmt.Println("  \\x [on|off]                   Expanded display mode (same as set display expanded on|off)")
 	fmt.Println("  \\o <file>                     Redirect query output to a file")
@@ -269,4 +278,138 @@ func handleReplSetDbType(cmd *cobra.Command, line *liner.State, historyMode stri
 	*currentDbType = chosen
 	fmt.Printf("dbType set to %s.\n", chosen)
 	return true
+}
+
+// handleReplWatch handles the \watch command to repeatedly execute a command.
+func handleReplWatch(
+	cmd *cobra.Command,
+	line *liner.State,
+	historyMode string,
+	input string,
+	cmdName string,
+	args []string,
+	c *client.Client,
+	sessionId string,
+	cfg *config.Config,
+) bool {
+	cmdLower := strings.ToLower(cmdName)
+
+	if cmdLower != "\\watch" {
+		return false
+	}
+
+	if shouldRecordHistory(historyMode, input, false) {
+		line.AppendHistory(input)
+	}
+
+	if len(args) < 1 {
+		fmt.Println("Usage: \\watch <command>")
+		return true
+	}
+
+	watchCommand := strings.Join(args, " ")
+	interval := 10 * time.Second
+
+	// Try to get interval from snapshot if available
+	if snapshot, err := c.GetTopSnapshot(sessionId); err == nil && snapshot.IntervalSec > 0 {
+		interval = time.Duration(snapshot.IntervalSec) * time.Second
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	fmt.Printf("Watching: %s (interval: %v, Ctrl+C to stop)\n\n", watchCommand, interval)
+
+	// Execute immediately first
+	fmt.Print("\033[H\033[2J")
+	executeWatchCommand(cmd, line, historyMode, watchCommand, c, sessionId, cfg)
+
+	// Start ticker for subsequent executions
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			// Clear screen (platform-independent)
+			fmt.Print("\033[H\033[2J")
+
+			// Execute the watched command
+			executeWatchCommand(cmd, line, historyMode, watchCommand, c, sessionId, cfg)
+
+		case <-sigChan:
+			fmt.Println("\nWatch stopped")
+			return true
+
+		case <-ctx.Done():
+			return true
+		}
+	}
+}
+
+// executeWatchCommand executes a command in watch mode.
+func executeWatchCommand(
+	cmd *cobra.Command,
+	line *liner.State,
+	historyMode string,
+	input string,
+	c *client.Client,
+	sessionId string,
+	cfg *config.Config,
+) {
+	// Parse the command
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		return
+	}
+
+	cmdName := parts[0]
+	var args []string
+	if len(parts) > 1 {
+		args = parts[1:]
+	}
+
+	// Try to execute through the various command handlers
+	// Check meta commands first
+	if strings.HasPrefix(cmdName, "\\") {
+		if handleReplMetaCommands(cmd, line, historyMode, input, cmdName, args, c, sessionId, cfg) {
+			return
+		}
+		if handleReplTopCommands(cmd, line, historyMode, input, cmdName, args, c, sessionId, cfg) {
+			return
+		}
+	} else {
+		// Try to match without backslash for convenience (e.g., "top" -> "\top")
+		fullCmdName := "\\" + cmdName
+		if handleReplMetaCommands(cmd, line, historyMode, input, fullCmdName, args, c, sessionId, cfg) {
+			return
+		}
+		if handleReplTopCommands(cmd, line, historyMode, input, fullCmdName, args, c, sessionId, cfg) {
+			return
+		}
+	}
+
+	// Check other CLI commands
+	if handled, _ := handleReplDetachExit(cmd, line, historyMode, input, c, sessionId, "", cfg); handled {
+		return
+	}
+	if handleReplSetDisplay(line, historyMode, input, cfg) {
+		return
+	}
+	if handleReplSetOutput(line, historyMode, input, cfg) {
+		return
+	}
+
+	// If it's a SQL statement, try to execute it
+	if strings.Contains(input, ";") {
+		// SQL statements are executed in the main REPL loop
+		// In watch mode, we can't easily execute them without the full context
+		fmt.Printf("SQL execution in watch mode is not supported\n")
+		return
+	}
+
+	fmt.Printf("Unknown command in watch mode: %s\n", cmdName)
 }
