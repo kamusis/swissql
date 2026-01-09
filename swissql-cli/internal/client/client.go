@@ -446,7 +446,7 @@ func (c *Client) AiGenerate(req *AiGenerateRequest) (*AiGenerateResponse, error)
 }
 
 func (c *Client) Execute(req *ExecuteRequest) (*ExecuteResponse, error) {
-	url := fmt.Sprintf("%s/v1/execute", c.BaseURL)
+	url := fmt.Sprintf("%s/v1/execute_sql", c.BaseURL)
 	respBody, err := c.post(url, req)
 	if err != nil {
 		return nil, err

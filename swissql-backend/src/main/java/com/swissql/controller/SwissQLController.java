@@ -103,12 +103,12 @@ public class SwissQLController {
     /**
      * Execute SQL query or command with optional limit and timeout.
      *
-     * POST /v1/execute
+     * POST /v1/execute_sql
      *
      * @param request Execute request with session ID and SQL
      * @return Query results with metadata
      */
-    @PostMapping("/execute")
+    @PostMapping("/execute_sql")
     public ResponseEntity<?> execute(@Valid @RequestBody ExecuteRequest request) {
         var sessionInfoOpt = sessionManager.getSession(request.getSessionId());
         if (sessionInfoOpt.isEmpty()) {

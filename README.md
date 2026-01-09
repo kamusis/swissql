@@ -158,7 +158,7 @@ The backend currently implements the following REST endpoints:
   - `POST /v1/disconnect?session_id=...`
   - `GET /v1/sessions/validate?session_id=...`
 - **SQL execution**
-  - `POST /v1/execute`
+  - `POST /v1/execute_sql`
 - **Metadata helpers**
   - `GET /v1/meta/list?session_id=...&kind=table|view&schema=...`
   - `GET /v1/meta/describe?session_id=...&name=...&detail=full`
