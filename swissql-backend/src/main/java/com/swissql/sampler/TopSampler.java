@@ -76,6 +76,12 @@ public class TopSampler {
         }
 
         log.info("Stopped TopSampler for session: {}", sessionId);
+
+        // TODO(P1): Consider explicitly closing Connection in stop() to make ownership clear.
+        // Current design relies on HikariDataSource.close() during session disconnect to
+        // close all connections. While this works, explicit closure would make
+        // boundary clearer and prevent any potential race conditions if a slow collectSnapshot
+        // runs after disconnect. Alternatively, add connection validity checks before use.
     }
 
     public void updateConfig(SamplerConfig newConfig) {
@@ -120,6 +126,10 @@ public class TopSampler {
 
         try {
             var collectorConfig = collectorRegistry.getConfig(connection, dbType);
+
+            // TODO(P1): Add connection validity check before using it, e.g.:
+            // if (conn == null || conn.isClosed()) { return; }
+            // This prevents potential issues if connection is closed by pool management.
             if (collectorConfig == null) {
                 log.error("No collector config found for dbType: {}", dbType);
                 return;

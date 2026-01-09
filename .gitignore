@@ -51,7 +51,7 @@ Thumbs.db
 # Troubleshooting artifacts (do not commit)
 /swissql-backend/netstat_output*.txt
 
-# Desgin docs
+# Design docs
 /design/
 
 # JDBC drivers

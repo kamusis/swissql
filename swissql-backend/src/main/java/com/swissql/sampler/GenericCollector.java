@@ -22,6 +22,9 @@ import java.util.Map;
 public class GenericCollector {
     private static final Logger log = LoggerFactory.getLogger(GenericCollector.class);
 
+    // TODO(P2): Add metrics logging: sample duration, success/failure counts per collector.
+    // Consider using Micrometer if available for production monitoring.
+
     public Object collect(Connection conn, String collectorName, CollectorConfig config) {
         CollectorDefinition collectorDef = config.getCollectors().get(collectorName);
         if (collectorDef == null) {

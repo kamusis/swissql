@@ -558,6 +558,11 @@ public class SwissQLController {
                 sql = sql.replace(":sql_id", "?");
             }
 
+            // TODO(P0): Move :param -> ? replacement and parameter binding to GenericCollector/SqlTemplateBinder
+            // utility instead of manual string replacement. This avoids code duplication and potential SQL
+            // injection. See: GenericCollector.executeQuery() should support parameterized queries with
+            // List<Object> parameters.
+
             try (var conn = databaseService.getConnection(sessionInfo);
                  var stmt = conn.prepareStatement(sql)) {
 

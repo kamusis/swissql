@@ -18,6 +18,9 @@ import java.util.concurrent.ScheduledExecutorService;
 public class SamplerManager {
     private static final Logger log = LoggerFactory.getLogger(SamplerManager.class);
 
+    // TODO(P2): Add sampling metrics (last sample duration, failure count, last success time).
+    // This helps with observability and troubleshooting sampling issues in production.
+
     private final SessionManager sessionManager;
     private final DatabaseService databaseService;
     private final CollectorRegistry collectorRegistry;
@@ -75,6 +78,11 @@ public class SamplerManager {
 
             samplers.put(sessionId, sampler);
             sampler.start();
+
+            // TODO(P1): Document ownership model: SessionManager owns HikariDataSource lifecycle,
+            // TopSampler holds a Connection reference for sampling efficiency, and cleanup happens
+            // via databaseService.closeSession() which closes entire pool. This design avoids
+            // per-sample connection overhead but requires careful handling of stop/shutdown ordering.
 
             log.info("Started sampler for session: {}", sessionId);
         } catch (Exception e) {

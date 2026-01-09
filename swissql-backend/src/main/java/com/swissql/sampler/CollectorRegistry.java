@@ -25,6 +25,9 @@ import java.util.stream.Stream;
 public class CollectorRegistry {
     private static final Logger log = LoggerFactory.getLogger(CollectorRegistry.class);
 
+    // TODO(P1): Add reloadConfigs() method to reload YAML configs without restart.
+    // Should integrate with driver reload endpoint for full configuration lifecycle.
+
     @Value("${jdbc.drivers.path:jdbc_drivers}")
     private String jdbcDriversPath;
 
