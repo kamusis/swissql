@@ -53,7 +53,7 @@ collectors:
       topSessions:
         description: L3 Load Attribution - Top active sessions by duration
         sql: |
-          SELECT 
+          SELECT
             s.sid,
             s.serial#,
             s.username,
@@ -61,11 +61,12 @@ collectors:
             s.status,
             s.wait_class,
             NVL(s.event, 'ON CPU') "event",
-            ROUND((SYSDATE - s.logon_time) * 86400, 0) "duration_sec",
+            s.last_call_et "active_duration_sec",
             NVL(s.sql_id, 'N/A') "sql_id"
           FROM v$session s
-          WHERE s.type = 'USER' AND s.status = 'ACTIVE'
-          ORDER BY s.logon_time
+          WHERE s.type = 'USER'
+            AND s.status = 'ACTIVE'
+          ORDER BY s.last_call_et DESC
           FETCH FIRST 10 ROWS ONLY
         singleRow: false
       io:

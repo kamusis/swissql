@@ -60,11 +60,11 @@ collectors:
             state AS "status",
             wait_event_type AS "wait_class",
             COALESCE(wait_event, 'ON CPU') AS "event",
-            EXTRACT(EPOCH FROM (now() - COALESCE(query_start, backend_start)))::bigint AS "duration_sec",
+            EXTRACT(EPOCH FROM (now() - query_start))::bigint AS "active_duration_sec",
             query_id::text AS "sql_id"
           FROM pg_stat_activity s
-          WHERE s.state = 'active' AND pid <> pg_backend_pid()
-          ORDER BY s.query_start NULLS LAST
+          WHERE s.state = 'active'
+          ORDER BY "active_duration_sec" DESC
           LIMIT 10
         singleRow: false
       io:
@@ -86,8 +86,7 @@ collectors:
         sql: |
           SELECT query_id::text AS sql_id, query AS sql_text, query AS sql_fulltext
           FROM pg_stat_activity
-          WHERE query_id IS NOT NULL
-          ORDER BY query_start DESC NULLS LAST
+          WHERE query_id::text = :sql_id
           LIMIT 1
         singleRow: true
         parameters:
