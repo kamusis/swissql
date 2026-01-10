@@ -70,6 +70,7 @@ public class SwissQLController {
         try {
             sessionInfo = sessionManager.createSession(request);
             databaseService.initializeSession(sessionInfo);
+            // TODO(P1): Provide an explicit sampler (re)start API so clients can restart sampling without reconnecting.
             samplerManager.startSampler(sessionInfo.getSessionId());
             ConnectResponse response = ConnectResponse.builder()
                     .sessionId(sessionInfo.getSessionId())

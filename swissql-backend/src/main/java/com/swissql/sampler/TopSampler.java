@@ -131,6 +131,7 @@ public class TopSampler {
             // if (conn == null || conn.isClosed()) { return; }
             // This prevents potential issues if connection is closed by pool management.
             if (collectorConfig == null) {
+                // TODO(P0): If no collector config is available for the dbType, stop this sampler to avoid repeated errors.
                 log.error("No collector config found for dbType: {}", dbType);
                 return;
             }

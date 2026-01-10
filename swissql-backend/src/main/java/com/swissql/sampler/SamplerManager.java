@@ -38,6 +38,13 @@ public class SamplerManager {
         this.scheduler = Executors.newScheduledThreadPool(10);
     }
 
+    // TODO(P1): Allow multiple sampler types per session (e.g., TopSampler, PerfSampler) each with its own interval
+    // and collector set. Possible design:
+    // - Maintain Map<String, Map<SamplerType, Sampler>> where SamplerType enumerates roles (TOP, PERF, …).
+    // - Start all required samplers on connect; each sampler schedules its own ScheduledFuture with its own interval.
+    // - Add explicit APIs to start/stop/restart a specific sampler type without reconnecting the session.
+    // - Ensure cleanup/disconnect stops all sampler instances for that session and cancels their tasks.
+
     public TopSnapshot getSnapshot(String sessionId) {
         TopSampler sampler = samplers.get(sessionId);
         if (sampler == null) {
