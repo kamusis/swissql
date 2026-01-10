@@ -23,6 +23,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 
 @RestController
 @RequestMapping("/v1")
@@ -571,16 +574,16 @@ public class SwissQLController {
 
             // TODO(P0): Move :param -> ? replacement and parameter binding to GenericCollector/SqlTemplateBinder
             // utility instead of manual string replacement. This avoids code duplication and potential SQL
-            // injection. See: GenericCollector.executeQuery() should support parameterized queries with
-            // List<Object> parameters.
+            // injection. It must support multiple parameters/placeholders (e.g., :sql_id, :inst_id, ...)
+            // and preserve parameter ordering when converting to a prepared statement.
 
-            try (var conn = databaseService.getConnection(sessionInfo);
-                 var stmt = conn.prepareStatement(sql)) {
-
+            try (Connection conn = databaseService.getConnection(sessionInfo);
+                 PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, sqlId);
-                try (var rs = stmt.executeQuery()) {
+                try (ResultSet rs = stmt.executeQuery()) {
 
                     if (rs.next()) {
+                        String id = rs.getString("sql_id");
                         String fullText = rs.getString("sql_fulltext");
                         String shortText = rs.getString("sql_text");
                         String text = fullText != null ? fullText : shortText;

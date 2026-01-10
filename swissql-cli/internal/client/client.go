@@ -682,13 +682,13 @@ func (c *Client) get(urlStr string) (io.ReadCloser, error) {
 
 // TopSnapshot represents the top performance metrics snapshot
 type TopSnapshot struct {
-	DbType      string       `json:"dbType"`
-	IntervalSec int          `json:"intervalSec"`
+	DbType      string       `json:"db_type"`
+	IntervalSec int          `json:"interval_sec"`
 	Context     OrderedMap   `json:"context"`
 	Cpu         OrderedMap   `json:"cpu"`
 	Sessions    OrderedMap   `json:"sessions"`
 	Waits       []OrderedMap `json:"waits"`
-	TopSessions []OrderedMap `json:"topSessions"`
+	TopSessions []OrderedMap `json:"top_sessions"`
 	Io          OrderedMap   `json:"io"`
 }
 
@@ -717,28 +717,6 @@ type SqlTextResponse struct {
 	SqlId     string `json:"sql_id"`
 	Text      string `json:"text"`
 	Truncated bool   `json:"truncated"`
-}
-
-func (r *SqlTextResponse) UnmarshalJSON(data []byte) error {
-	type sqlTextResponseAlias struct {
-		SqlIdSnake string `json:"sql_id"`
-		SqlIdCamel string `json:"sqlId"`
-		Text       string `json:"text"`
-		Truncated  bool   `json:"truncated"`
-	}
-
-	var a sqlTextResponseAlias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-
-	r.SqlId = a.SqlIdSnake
-	if r.SqlId == "" {
-		r.SqlId = a.SqlIdCamel
-	}
-	r.Text = a.Text
-	r.Truncated = a.Truncated
-	return nil
 }
 
 // GetSqlText retrieves SQL text by ID

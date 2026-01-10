@@ -1,7 +1,4 @@
 package com.swissql.model;
-
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -14,7 +11,6 @@ import java.util.Map;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
 public class TopSnapshot {
     private String dbType;
     private Integer intervalSec;
