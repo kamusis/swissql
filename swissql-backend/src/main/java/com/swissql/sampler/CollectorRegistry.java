@@ -7,7 +7,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PostConstruct;
-import java.io.File;
 import java.io.FileInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,44 +17,55 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Component
 public class CollectorRegistry {
     private static final Logger log = LoggerFactory.getLogger(CollectorRegistry.class);
 
-    // TODO(P1): Add reloadConfigs() and invoke it on sampler start so updated YAMLs are picked up without
-    // backend restart; keep startup preloading as baseline cache and integrate with driver reload lifecycle.
-
     @Value("${jdbc.drivers.path:jdbc_drivers}")
     private String jdbcDriversPath;
 
-    private final Map<String, List<CollectorConfig>> configsByDbType = new ConcurrentHashMap<>();
+    private volatile Map<String, List<CollectorConfig>> configsByDbType = new ConcurrentHashMap<>();
 
     @PostConstruct
     public void loadConfigs() {
+        reloadConfigs();
+    }
+
+    /**
+     * Reloads collector YAML configurations from the configured driver directory.
+     *
+     * This method builds a new configuration map and swaps it atomically to avoid partial updates.
+     */
+    public void reloadConfigs() {
         try {
+            Map<String, List<CollectorConfig>> newConfigsByDbType = new ConcurrentHashMap<>();
             Path driversDir = Paths.get(jdbcDriversPath);
             if (!Files.exists(driversDir)) {
                 log.warn("JDBC drivers directory not found: {}", jdbcDriversPath);
+                configsByDbType = newConfigsByDbType;
                 return;
             }
 
             try (Stream<Path> dbTypeDirs = Files.list(driversDir)) {
                 dbTypeDirs.filter(Files::isDirectory).forEach(dbTypeDir -> {
                     String dbType = dbTypeDir.getFileName().toString();
-                    loadConfigsForDbType(dbType, dbTypeDir);
+                    List<CollectorConfig> configs = loadConfigsForDbType(dbType, dbTypeDir);
+                    if (!configs.isEmpty()) {
+                        newConfigsByDbType.put(dbType, configs);
+                    }
                 });
             }
 
-            log.info("Loaded collector configs for {} database types", configsByDbType.size());
+            configsByDbType = newConfigsByDbType;
+            log.info("Reloaded collector configs for {} database types", newConfigsByDbType.size());
         } catch (Exception e) {
-            log.error("Failed to load collector configs", e);
+            log.error("Failed to reload collector configs", e);
         }
     }
 
-    private void loadConfigsForDbType(String dbType, Path dbTypeDir) {
+    private List<CollectorConfig> loadConfigsForDbType(String dbType, Path dbTypeDir) {
         List<CollectorConfig> configs = new ArrayList<>();
 
         try (Stream<Path> yamlFiles = Files.list(dbTypeDir)) {
@@ -64,6 +74,9 @@ public class CollectorRegistry {
                         try {
                             CollectorConfig config = loadYamlConfig(yamlFile);
                             if (config != null && config.getSupportedVersions() != null) {
+                                if (yamlFile.getFileName() != null) {
+                                    config.setSourceFile(yamlFile.getFileName().toString());
+                                }
                                 configs.add(config);
                                 log.debug("Loaded config: {} for dbType: {}", yamlFile.getFileName(), dbType);
                             }
@@ -76,8 +89,10 @@ public class CollectorRegistry {
         }
 
         if (!configs.isEmpty()) {
-            configsByDbType.put(dbType, configs);
+            return configs;
         }
+
+        return List.of();
     }
 
     private CollectorConfig loadYamlConfig(Path yamlFile) throws Exception {
@@ -90,14 +105,51 @@ public class CollectorRegistry {
         try {
             String dbVersion = conn.getMetaData().getDatabaseProductVersion();
             String numericVersion = extractNumericVersion(dbVersion);
-            List<CollectorConfig> configs = configsByDbType.get(dbType);
+            Map<String, List<CollectorConfig>> snapshot = configsByDbType;
+            List<CollectorConfig> configs = snapshot.get(dbType);
 
             if (configs == null || configs.isEmpty()) {
-                log.error("No collector configs found for dbType: {}", dbType);
+                log.error(
+                        "No collector configs found for dbType: {} (dbVersion='{}', numericVersion='{}', loadedDbTypes={})",
+                        dbType,
+                        dbVersion,
+                        numericVersion,
+                        snapshot.keySet()
+                );
                 return null;
             }
 
-            return findMatchingConfig(configs, numericVersion);
+            CollectorConfig matched = findMatchingConfig(configs, numericVersion);
+            if (matched == null) {
+                String availableRanges = configs.stream()
+                        .map(c -> {
+                            if (c == null || c.getSupportedVersions() == null) {
+                                return "<missing supportedVersions>";
+                            }
+                            String sourceFile = c.getSourceFile();
+                            String range = c.getSupportedVersions().getMin() + "-" + c.getSupportedVersions().getMax();
+                            if (sourceFile == null || sourceFile.isBlank()) {
+                                return range;
+                            }
+                            return sourceFile + ":" + range;
+                        })
+                        .distinct()
+                        .sorted()
+                        .reduce((a, b) -> a + ", " + b)
+                        .orElse("<none>");
+
+                log.error(
+                        "No matching collector config for dbType: {} (dbVersion='{}', numericVersion='{}', configsLoaded={}, supportedVersions=[{}])",
+                        dbType,
+                        dbVersion,
+                        numericVersion,
+                        configs.size(),
+                        availableRanges
+                );
+                return null;
+            }
+
+            return matched;
         } catch (Exception e) {
             log.error("Failed to get config for dbType: {}", dbType, e);
             return null;

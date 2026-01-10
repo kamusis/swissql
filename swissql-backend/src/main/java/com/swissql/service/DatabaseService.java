@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -51,6 +52,8 @@ public class DatabaseService {
     private static final int MAX_STRING_CHARS = 100_000;
     private static final int MAX_NESTED_DEPTH = 3;
     private static final String UNSUPPORTED_PLACEHOLDER = "[unsupported]";
+
+    private static final Pattern POSTGRES_POSITIONAL_PARAMETER_PATTERN = Pattern.compile("\\$\\d+");
 
     private static String buildMissingTnsAdminMessage(String tnsAdmin) {
         return "TNS_ADMIN directory does not exist or is not a directory: " + tnsAdmin + ". "
@@ -315,6 +318,13 @@ public class DatabaseService {
         }
 
         if ("postgres".equals(dbType) || "postgresql".equals(dbType)) {
+            if (containsPostgresPositionalParameters(sql)) {
+                throw new SQLException(
+                        "Cannot EXPLAIN SQL that contains positional parameters like $1 without parameter values. "
+                                + "This usually happens when the SQL text is sourced from pg_stat_statements (normalized form). "
+                                + "Please run \\\\explain on the original SQL with literals, or manually replace $n placeholders with concrete values before explaining."
+                );
+            }
             if (analyze) {
                 return queryTabular(session, "EXPLAIN (ANALYZE, FORMAT TEXT) " + sql, List.of(), 0);
             }
@@ -322,6 +332,19 @@ public class DatabaseService {
         }
 
         return buildUnsupportedMetaResponse("meta/explain", dbType);
+    }
+
+    /**
+     * Detects PostgreSQL positional parameters like $1, $2, ... in SQL strings.
+     *
+     * @param sql SQL text
+     * @return true if positional parameters are present
+     */
+    private boolean containsPostgresPositionalParameters(String sql) {
+        if (sql == null || sql.isBlank()) {
+            return false;
+        }
+        return POSTGRES_POSITIONAL_PARAMETER_PATTERN.matcher(sql).find();
     }
 
     /**
@@ -705,6 +728,25 @@ public class DatabaseService {
         try (Connection conn = ds.getConnection()) {
             if (session.getOptions().isReadOnly()) {
                 conn.setReadOnly(true);
+            }
+
+            // For parameter-less queries, prefer Statement over PreparedStatement.
+            // This avoids PostgreSQL JDBC extended-protocol edge cases (SQLSTATE 08P01)
+            // that can mark pooled connections as broken and exhaust Hikari pool.
+            if (params == null || params.isEmpty()) {
+                try (Statement stmt = conn.createStatement()) {
+                    try (ResultSet rs = stmt.executeQuery(sql)) {
+                        long duration = System.currentTimeMillis() - startTime;
+                        ExecuteResponse response = new ExecuteResponse();
+                        ExecuteResponse.Metadata metadata = new ExecuteResponse.Metadata();
+                        metadata.setDurationMs(duration);
+                        response.setMetadata(metadata);
+                        response.setType("tabular");
+                        processResultSet(rs, response, limit);
+                        response.setMetadata(metadata);
+                        return response;
+                    }
+                }
             }
 
             try (PreparedStatement stmt = conn.prepareStatement(sql)) {

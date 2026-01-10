@@ -86,37 +86,15 @@ func shouldRecordHistory(mode string, input string, isSQL bool) bool {
 	case "sql_only":
 		return false
 	case "safe_only":
+		// Blacklist-only policy for maintainability: record everything except a few
+		// potentially sensitive or noisy commands.
 		if strings.HasPrefix(sLower, "/ai") || strings.HasPrefix(sLower, "/context") {
 			return false
 		}
 		if strings.HasPrefix(s, "@") || strings.HasPrefix(s, "\\i") {
 			return false
 		}
-		if strings.HasPrefix(s, "\\d") || strings.HasPrefix(sLower, "desc") {
-			return true
-		}
-		if strings.HasPrefix(s, "\\dt") || strings.HasPrefix(s, "\\dv") {
-			return true
-		}
-		if strings.HasPrefix(s, "\\explain") || strings.HasPrefix(sLower, "explain") {
-			return true
-		}
-		if sLower == "conninfo" || sLower == "\\conninfo" {
-			return true
-		}
-		if strings.HasPrefix(sLower, "set display ") {
-			return true
-		}
-		if strings.HasPrefix(sLower, "set output ") {
-			return true
-		}
-		if strings.HasPrefix(s, "\\x") {
-			return true
-		}
-		if strings.HasPrefix(s, "\\o") {
-			return true
-		}
-		return false
+		return true
 	default:
 		return false
 	}

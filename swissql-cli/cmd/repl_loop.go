@@ -192,11 +192,12 @@ func runRepl(cmd *cobra.Command, args []string) error {
 			if handleReplMetaCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId, cfg) {
 				continue
 			}
-
+			if handleReplSamplerCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId, cfg) {
+				continue
+			}
 			if handleReplTopCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId, cfg) {
 				continue
 			}
-
 			if handleReplIOCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId) {
 				continue
 			}

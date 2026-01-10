@@ -21,15 +21,24 @@ public class TopSampler {
     private final GenericCollector collector;
     private final ScheduledExecutorService scheduler;
 
+    private final StopListener stopListener;
+
     private SamplerConfig config;
     private ScheduledFuture<?> scheduledTask;
     private TopSnapshot latestSnapshot;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile CountDownLatch currentTaskLatch;
 
+    private final AtomicBoolean stopReasonLogged = new AtomicBoolean(false);
+
+    public interface StopListener {
+        void onStopped(String sessionId, String reason);
+    }
+
     public TopSampler(String sessionId, Connection connection, String dbType,
                       CollectorRegistry collectorRegistry, GenericCollector collector,
-                      ScheduledExecutorService scheduler, SamplerConfig config) {
+                      ScheduledExecutorService scheduler, SamplerConfig config,
+                      StopListener stopListener) {
         this.sessionId = sessionId;
         this.connection = connection;
         this.dbType = dbType;
@@ -37,6 +46,7 @@ public class TopSampler {
         this.collector = collector;
         this.scheduler = scheduler;
         this.config = config != null ? config : new SamplerConfig(10, true, true, 10);
+        this.stopListener = stopListener;
     }
 
     public void start() {
@@ -121,27 +131,29 @@ public class TopSampler {
             return;
         }
 
+        if (!ensureConnectionValidOrStop()) {
+            return;
+        }
+
         CountDownLatch latch = new CountDownLatch(1);
         currentTaskLatch = latch;
 
         try {
             var collectorConfig = collectorRegistry.getConfig(connection, dbType);
 
-            // TODO(P1): Add connection validity check before using it, e.g.:
-            // if (conn == null || conn.isClosed()) { return; }
-            // This prevents potential issues if connection is closed by pool management.
             if (collectorConfig == null) {
-                // TODO(P0): If no collector config is available for the dbType, stop this sampler to avoid repeated errors.
-                log.error("No collector config found for dbType: {}", dbType);
+                stopDueToReason("No collector config found for dbType: " + dbType);
                 return;
             }
+
+            String configSummary = summarizeCollectorConfig(collectorConfig);
 
             TopSnapshot snapshot = (TopSnapshot) collector.collect(connection, "top", collectorConfig);
             snapshot.setDbType(dbType);
             snapshot.setIntervalSec(config.getIntervalSec());
             latestSnapshot = snapshot;
 
-            log.debug("Collected snapshot for session: {}", sessionId);
+            log.debug("Collected snapshot for session: {} (dbType={}, collector={})", sessionId, dbType, configSummary);
         } catch (Exception e) {
             if (running.get()) {
                 log.error("Failed to collect snapshot for session: {}", sessionId, e);
@@ -149,5 +161,63 @@ public class TopSampler {
         } finally {
             latch.countDown();
         }
+    }
+
+    private boolean ensureConnectionValidOrStop() {
+        try {
+            if (connection == null) {
+                stopDueToReason("connection is null");
+                return false;
+            }
+
+            if (connection.isClosed()) {
+                stopDueToReason("connection is closed");
+                return false;
+            }
+
+            if (!connection.isValid(2)) {
+                stopDueToReason("connection is not valid");
+                return false;
+            }
+
+            return true;
+        } catch (Exception e) {
+            stopDueToReason("connection validity check failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private void stopDueToReason(String reason) {
+        if (!stopReasonLogged.compareAndSet(false, true)) {
+            stop();
+            return;
+        }
+
+        log.warn("Stopping TopSampler for session: {}. reason={}", sessionId, reason);
+        stop();
+
+        if (stopListener != null) {
+            try {
+                stopListener.onStopped(sessionId, reason);
+            } catch (Exception e) {
+                log.warn("Failed to notify stop listener for session: {}", sessionId, e);
+            }
+        }
+    }
+
+    private String summarizeCollectorConfig(com.swissql.model.CollectorConfig config) {
+        if (config == null) {
+            return "<null>";
+        }
+        com.swissql.model.SupportedVersions v = config.getSupportedVersions();
+        if (v == null) {
+            return "<missing supportedVersions>";
+        }
+        String range = v.getMin() + "-" + v.getMax();
+        String sourceFile = config.getSourceFile();
+        if (sourceFile == null || sourceFile.isBlank()) {
+            return range;
+        }
+        return sourceFile + ":" + range;
     }
 }

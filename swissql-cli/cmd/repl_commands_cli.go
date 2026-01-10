@@ -50,6 +50,9 @@ func handleReplHelp(line *liner.State, historyMode string, input string) bool {
 	fmt.Println("  \\sqltext <sql_id>             Get SQL text by ID")
 	fmt.Println("  \\plan <sql_id>               Get execution plan for SQL by ID")
 	fmt.Println("  \\top                          Show top performance metrics")
+	fmt.Println("  \\sampler <action> <sampler>   Control samplers (explicit)")
+	fmt.Println("                               Actions: start|stop|restart|status")
+	fmt.Println("                               Samplers: top")
 	fmt.Println("  \\watch <command>             Repeatedly execute a command (e.g., \\watch \\top)")
 	fmt.Println("  \\i <file>                     Execute statements from a file (alias: @<file>)")
 	fmt.Println("  \\x [on|off]                   Expanded display mode (same as set display expanded on|off)")
@@ -63,6 +66,10 @@ func handleReplHelp(line *liner.State, historyMode string, input string) bool {
 	fmt.Println("")
 	fmt.Println("Notes:")
 	fmt.Println("  - End a statement with ';' to execute")
+	fmt.Println("  - Samplers do not auto-start on connect. Example:")
+	fmt.Println("      connect <dsn>")
+	fmt.Println("      \\sampler start top")
+	fmt.Println("      \\top")
 	return true
 }
 

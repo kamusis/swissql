@@ -1,7 +1,7 @@
 dbType: postgres
 supportedVersions:
   min: "15.0.0.0.0"
-  max: "15.99.99.99.99"
+  max: "18.99.99.99.99"
 description: PostgreSQL 15 database collectors configuration
 collectors:
   top:
@@ -84,9 +84,9 @@ collectors:
       by_id:
         description: Get SQL text by SQL ID
         sql: |
-          SELECT query_id::text AS sql_id, query AS sql_text, query AS sql_fulltext
-          FROM pg_stat_activity
-          WHERE query_id::text = :sql_id
+          SELECT queryid::text AS sql_id, query AS sql_text, query AS sql_fulltext
+          FROM pg_stat_statements
+          WHERE queryid = CAST(:sql_id AS bigint)
           LIMIT 1
         singleRow: true
         parameters:

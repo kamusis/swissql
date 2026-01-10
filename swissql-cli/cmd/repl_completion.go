@@ -246,6 +246,7 @@ func makeCompleter(c *client.Client, sessionId string) func(string) []string {
 			// Meta command completion
 			metaCommands := []string{
 				"\\d", "\\d+", "\\dt", "\\dv", "\\i", "\\explain", "\\explain analyze", "\\conninfo", "\\x", "\\timing", "\\watch",
+				"\\sampler",
 			}
 			return makeLineCompletions(line, lastWord, filterCompletions(metaCommands, lastWord), true)
 
@@ -330,6 +331,7 @@ func makeCompleter(c *client.Client, sessionId string) func(string) []string {
 				"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER",
 				"FROM", "WHERE", "JOIN", "GROUP BY", "ORDER BY", "AND", "OR", "NOT",
 				"\\d", "\\d+", "\\dt", "\\dv", "\\i", "\\explain", "\\explain analyze", "\\conninfo", "\\x", "\\timing",
+				"\\sampler",
 				"desc", "desc+", "explain", "explain plan for", "explain analyze", "help", "detach", "exit", "quit",
 				"/ai", "/context",
 			}

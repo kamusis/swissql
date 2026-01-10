@@ -70,8 +70,6 @@ public class SwissQLController {
         try {
             sessionInfo = sessionManager.createSession(request);
             databaseService.initializeSession(sessionInfo);
-            // TODO(P1): Provide an explicit sampler (re)start API so clients can restart sampling without reconnecting.
-            samplerManager.startSampler(sessionInfo.getSessionId());
             ConnectResponse response = ConnectResponse.builder()
                     .sessionId(sessionInfo.getSessionId())
                     .traceId(MDC.get("trace_id"))
@@ -336,6 +334,9 @@ public class SwissQLController {
     @PostMapping("/meta/drivers/reload")
     public ResponseEntity<DriversReloadResponse> metaDriversReload() {
         JdbcDriverAutoLoader.ReloadResult result = jdbcDriverAutoLoader.reload();
+
+        samplerManager.getCollectorRegistry().reloadConfigs();
+
         DriversReloadResponse response = new DriversReloadResponse();
         response.setStatus("ok");
         response.setReloaded(result.toMap());
@@ -491,6 +492,15 @@ public class SwissQLController {
                     .build());
         }
 
+        String stoppedReason = samplerManager.getStoppedReason(sessionId);
+        if (stoppedReason != null && !stoppedReason.isBlank()) {
+            return ResponseEntity.status(409).body(ErrorResponse.builder()
+                    .code("SAMPLER_STOPPED")
+                    .message("Sampler stopped: " + stoppedReason)
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
         TopSnapshot snapshot = samplerManager.getSnapshot(sessionId);
         if (snapshot == null) {
             return ResponseEntity.status(404).body(ErrorResponse.builder()
@@ -639,5 +649,103 @@ public class SwissQLController {
                     .traceId(MDC.get("trace_id"))
                     .build());
         }
+    }
+
+    /**
+     * Start top sampler for an existing session.
+     *
+     * POST /v1/top/start
+     */
+    @PostMapping("/top/start")
+    public ResponseEntity<?> startTopSampler(@RequestParam("session_id") String sessionId) {
+        var sessionInfoOpt = sessionManager.getSession(sessionId);
+        if (sessionInfoOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(ErrorResponse.builder()
+                    .code("SESSION_EXPIRED")
+                    .message("Session missing or expired")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        samplerManager.startSampler(sessionId);
+        var status = samplerManager.getTopSamplerStatus(sessionId);
+        return ResponseEntity.ok(TopSamplerControlResponse.builder()
+                .message("Start requested")
+                .status(status.getStatus())
+                .reason(status.getReason())
+                .build());
+    }
+
+    /**
+     * Stop top sampler for an existing session.
+     *
+     * POST /v1/top/stop
+     */
+    @PostMapping("/top/stop")
+    public ResponseEntity<?> stopTopSampler(@RequestParam("session_id") String sessionId) {
+        var sessionInfoOpt = sessionManager.getSession(sessionId);
+        if (sessionInfoOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(ErrorResponse.builder()
+                    .code("SESSION_EXPIRED")
+                    .message("Session missing or expired")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        samplerManager.stopSampler(sessionId);
+        var status = samplerManager.getTopSamplerStatus(sessionId);
+        return ResponseEntity.ok(TopSamplerControlResponse.builder()
+                .message("Stop requested")
+                .status(status.getStatus())
+                .reason(status.getReason())
+                .build());
+    }
+
+    /**
+     * Restart top sampler for an existing session.
+     *
+     * POST /v1/top/restart
+     */
+    @PostMapping("/top/restart")
+    public ResponseEntity<?> restartTopSampler(@RequestParam("session_id") String sessionId) {
+        var sessionInfoOpt = sessionManager.getSession(sessionId);
+        if (sessionInfoOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(ErrorResponse.builder()
+                    .code("SESSION_EXPIRED")
+                    .message("Session missing or expired")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        samplerManager.restartSampler(sessionId);
+        var status = samplerManager.getTopSamplerStatus(sessionId);
+        return ResponseEntity.ok(TopSamplerControlResponse.builder()
+                .message("Restart requested")
+                .status(status.getStatus())
+                .reason(status.getReason())
+                .build());
+    }
+
+    /**
+     * Get current top sampler status for an existing session.
+     *
+     * GET /v1/top/status
+     */
+    @GetMapping("/top/status")
+    public ResponseEntity<?> getTopSamplerStatus(@RequestParam("session_id") String sessionId) {
+        var sessionInfoOpt = sessionManager.getSession(sessionId);
+        if (sessionInfoOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(ErrorResponse.builder()
+                    .code("SESSION_EXPIRED")
+                    .message("Session missing or expired")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        var status = samplerManager.getTopSamplerStatus(sessionId);
+        return ResponseEntity.ok(TopSamplerStatusResponse.builder()
+                .status(status.getStatus())
+                .reason(status.getReason())
+                .build());
     }
 }

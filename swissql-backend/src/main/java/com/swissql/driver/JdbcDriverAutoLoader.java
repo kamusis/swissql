@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.ServiceLoader;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -35,6 +36,8 @@ public class JdbcDriverAutoLoader {
     private static final Logger log = LoggerFactory.getLogger(JdbcDriverAutoLoader.class);
 
     private static final String DEFAULT_DIR = "/jdbc_drivers";
+
+    private static final Set<String> BUILTIN_DB_TYPES = Set.of("oracle", "postgres");
 
     private final Environment environment;
     private final ObjectMapper objectMapper;
@@ -137,6 +140,11 @@ public class JdbcDriverAutoLoader {
     private void loadDbTypeDirectory(String dbType, Path dbDir, ReloadResult result) throws Exception {
         Path manifestPath = dbDir.resolve("driver.json");
         if (!Files.exists(manifestPath) || !Files.isRegularFile(manifestPath)) {
+            if (BUILTIN_DB_TYPES.contains(dbType.toLowerCase(Locale.ROOT))) {
+                log.debug("Skipping driver.json validation for builtin dbType '{}' under: {}", dbType, manifestPath);
+                return;
+            }
+
             result.addWarning("Missing driver.json for dbType '" + dbType + "' under: " + manifestPath);
             return;
         }
@@ -150,6 +158,11 @@ public class JdbcDriverAutoLoader {
 
         List<Path> jarFiles = listJarFiles(dbDir);
         if (jarFiles.isEmpty()) {
+            if (BUILTIN_DB_TYPES.contains(dbType.toLowerCase(Locale.ROOT))) {
+                log.debug("No JDBC driver JARs found for builtin dbType '{}' under: {}", dbType, dbDir);
+                return;
+            }
+
             result.addWarning("No JDBC driver JARs found for dbType '" + dbType + "' under: " + dbDir);
             return;
         }

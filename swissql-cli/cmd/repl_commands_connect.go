@@ -33,15 +33,16 @@ func handleReplConnectCommand(cmd *cobra.Command, line *liner.State, historyMode
 		return false, config.SessionEntry{}, ""
 	}
 
-	if shouldRecordHistory(historyMode, input, false) {
-		line.AppendHistory(input)
-	}
-
 	dsn := strings.TrimSpace(strings.Trim(trimmed[len(fields[0]):], " \t"))
 	dsn = strings.Trim(dsn, "\"'")
 	if dsn == "" {
 		fmt.Println("Error: connect requires a DSN")
 		return true, config.SessionEntry{}, ""
+	}
+
+	if shouldRecordHistory(historyMode, input, false) {
+		masked := config.MaskDsn(dsn)
+		line.AppendHistory("connect " + masked)
 	}
 
 	dbType := "oracle" // Default

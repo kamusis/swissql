@@ -103,6 +103,17 @@ type DriversReloadResponse struct {
 	Reloaded map[string]interface{} `json:"reloaded"`
 }
 
+type TopSamplerControlResponse struct {
+	Message string `json:"message"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason"`
+}
+
+type TopSamplerStatusResponse struct {
+	Status string `json:"status"`
+	Reason string `json:"reason"`
+}
+
 type DriverEntry struct {
 	DbType          string   `json:"db_type"`
 	Source          string   `json:"source"`
@@ -266,6 +277,78 @@ func (c *Client) MetaDescribe(sessionId string, name string, detail string) (*Ex
 	defer body.Close()
 
 	var resp ExecuteResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) TopSamplerStart(sessionId string) (*TopSamplerControlResponse, error) {
+	q := url.Values{}
+	q.Set("session_id", sessionId)
+	urlStr := fmt.Sprintf("%s/v1/top/start?%s", c.BaseURL, q.Encode())
+
+	body, err := c.post(urlStr, map[string]interface{}{})
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp TopSamplerControlResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) TopSamplerStop(sessionId string) (*TopSamplerControlResponse, error) {
+	q := url.Values{}
+	q.Set("session_id", sessionId)
+	urlStr := fmt.Sprintf("%s/v1/top/stop?%s", c.BaseURL, q.Encode())
+
+	body, err := c.post(urlStr, map[string]interface{}{})
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp TopSamplerControlResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) TopSamplerRestart(sessionId string) (*TopSamplerControlResponse, error) {
+	q := url.Values{}
+	q.Set("session_id", sessionId)
+	urlStr := fmt.Sprintf("%s/v1/top/restart?%s", c.BaseURL, q.Encode())
+
+	body, err := c.post(urlStr, map[string]interface{}{})
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp TopSamplerControlResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) TopSamplerStatus(sessionId string) (*TopSamplerStatusResponse, error) {
+	q := url.Values{}
+	q.Set("session_id", sessionId)
+	urlStr := fmt.Sprintf("%s/v1/top/status?%s", c.BaseURL, q.Encode())
+
+	body, err := c.get(urlStr)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp TopSamplerStatusResponse
 	if err := json.NewDecoder(body).Decode(&resp); err != nil {
 		return nil, err
 	}
@@ -631,9 +714,31 @@ func (c *Client) GetTopSnapshot(sessionId string) (*TopSnapshot, error) {
 
 // SqlTextResponse represents the SQL text response
 type SqlTextResponse struct {
-	SqlId     string `json:"sqlId"`
+	SqlId     string `json:"sql_id"`
 	Text      string `json:"text"`
 	Truncated bool   `json:"truncated"`
+}
+
+func (r *SqlTextResponse) UnmarshalJSON(data []byte) error {
+	type sqlTextResponseAlias struct {
+		SqlIdSnake string `json:"sql_id"`
+		SqlIdCamel string `json:"sqlId"`
+		Text       string `json:"text"`
+		Truncated  bool   `json:"truncated"`
+	}
+
+	var a sqlTextResponseAlias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+
+	r.SqlId = a.SqlIdSnake
+	if r.SqlId == "" {
+		r.SqlId = a.SqlIdCamel
+	}
+	r.Text = a.Text
+	r.Truncated = a.Truncated
+	return nil
 }
 
 // GetSqlText retrieves SQL text by ID

@@ -14,6 +14,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
+/**
+ * Manages samplers for database sessions.
+ */
 @Component
 public class SamplerManager {
     private static final Logger log = LoggerFactory.getLogger(SamplerManager.class);
@@ -28,6 +31,28 @@ public class SamplerManager {
     private final ScheduledExecutorService scheduler;
 
     private final Map<String, TopSampler> samplers = new ConcurrentHashMap<>();
+    private final Map<String, String> samplerStoppedReasons = new ConcurrentHashMap<>();
+
+    /**
+     * Represents the current top sampler status for a session.
+     */
+    public static class SamplerStatus {
+        private final String status;
+        private final String reason;
+
+        public SamplerStatus(String status, String reason) {
+            this.status = status;
+            this.reason = reason;
+        }
+
+        public String getStatus() {
+            return status;
+        }
+
+        public String getReason() {
+            return reason;
+        }
+    }
 
     public SamplerManager(SessionManager sessionManager, DatabaseService databaseService,
                           CollectorRegistry collectorRegistry, GenericCollector genericCollector) {
@@ -45,6 +70,12 @@ public class SamplerManager {
     // - Add explicit APIs to start/stop/restart a specific sampler type without reconnecting the session.
     // - Ensure cleanup/disconnect stops all sampler instances for that session and cancels their tasks.
 
+    /**
+     * Returns the latest snapshot for a session.
+     *
+     * @param sessionId the session ID
+     * @return the latest snapshot, or null if no sampler is found
+     */
     public TopSnapshot getSnapshot(String sessionId) {
         TopSampler sampler = samplers.get(sessionId);
         if (sampler == null) {
@@ -54,11 +85,55 @@ public class SamplerManager {
         return sampler.getLatestSnapshot();
     }
 
+    public String getStoppedReason(String sessionId) {
+        return samplerStoppedReasons.get(sessionId);
+    }
+
+    /**
+     * Returns current top sampler status for a session.
+     *
+     * Status values:
+     * - RUNNING: sampler exists and is running
+     * - STOPPED: sampler was auto-stopped and a reason is recorded
+     * - STOPPED: sampler is not running
+     *
+     * @param sessionId the session ID
+     * @return the current top sampler status
+     */
+    public SamplerStatus getTopSamplerStatus(String sessionId) {
+        TopSampler sampler = samplers.get(sessionId);
+        if (sampler != null && sampler.isRunning()) {
+            return new SamplerStatus("RUNNING", null);
+        }
+
+        String reason = samplerStoppedReasons.get(sessionId);
+        if (reason != null && !reason.isBlank()) {
+            return new SamplerStatus("STOPPED", reason);
+        }
+
+        return new SamplerStatus("STOPPED", null);
+    }
+
+    /**
+     * Restarts top sampler for a session.
+     *
+     * @param sessionId the session ID
+     */
+    public void restartSampler(String sessionId) {
+        stopSampler(sessionId);
+        samplerStoppedReasons.remove(sessionId);
+        startSampler(sessionId);
+    }
+
     public void startSampler(String sessionId) {
         if (samplers.containsKey(sessionId)) {
             log.warn("Sampler already exists for session: {}", sessionId);
             return;
         }
+
+        samplerStoppedReasons.remove(sessionId);
+
+        collectorRegistry.reloadConfigs();
 
         try {
             var sessionInfoOpt = sessionManager.getSession(sessionId);
@@ -71,6 +146,14 @@ public class SamplerManager {
             Connection connection = databaseService.getConnection(sessionInfo);
             String dbType = sessionInfo.getDbType();
 
+            var collectorConfig = collectorRegistry.getConfig(connection, dbType);
+            if (collectorConfig == null) {
+                String reason = "No collector config found for dbType: " + dbType;
+                samplerStoppedReasons.put(sessionId, reason);
+                log.warn("Sampler not started for session: {}. reason={}", sessionId, reason);
+                return;
+            }
+
             SamplerConfig defaultConfig = SamplerConfig.builder()
                     .intervalSec(10)
                     .enableTopSql(true)
@@ -80,7 +163,12 @@ public class SamplerManager {
 
             TopSampler sampler = new TopSampler(
                     sessionId, connection, dbType, collectorRegistry,
-                    genericCollector, scheduler, defaultConfig
+                    genericCollector, scheduler, defaultConfig,
+                    (stoppedSessionId, reason) -> {
+                        samplers.remove(stoppedSessionId);
+                        samplerStoppedReasons.put(stoppedSessionId, reason);
+                        log.warn("Sampler stopped for session: {}. reason={}", stoppedSessionId, reason);
+                    }
             );
 
             samplers.put(sessionId, sampler);
@@ -113,12 +201,16 @@ public class SamplerManager {
         if (sampler != null) {
             sampler.stop();
             log.info("Stopped sampler for session: {}", sessionId);
+            return;
         }
+
+        // Stop is idempotent; do not record a reason for manual stop.
     }
 
     public void cleanup() {
         samplers.values().forEach(TopSampler::stop);
         samplers.clear();
+        samplerStoppedReasons.clear();
         scheduler.shutdown();
     }
 
