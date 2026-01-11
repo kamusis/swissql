@@ -55,6 +55,14 @@ public class GenericCollector {
             try {
                 Object result = executeQuery(conn, layer.getSql(), layer.getSingleRow());
 
+                // TODO(P1): Avoid hardcoding YAML layer identifiers here.
+                // Current design couples collector YAML `layers` keys (e.g., `topSessions`) to Java code.
+                // This makes collector extension harder and risks naming drift across boundaries
+                // (YAML identifiers vs JSON snake_case contract, e.g., `top_sessions`).
+                // Refactor to either:
+                // - return layers as a map keyed by canonical snake_case identifiers, or
+                // - introduce centralized mapping + normalization (support both `topSessions` and `top_sessions`).
+
                 switch (layerName) {
                     case "context" -> snapshot.setContext((Map<String, Object>) result);
                     case "cpu" -> snapshot.setCpu((Map<String, Object>) result);

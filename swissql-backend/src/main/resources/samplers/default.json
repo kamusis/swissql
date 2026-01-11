@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "samplers": [
+    {
+      "sampler_id": "top",
+      "enabled": true,
+      "schedule": {
+        "type": "interval",
+        "interval_sec": 10
+      },
+      "run_policy": {
+        "timeout_ms": 5000,
+        "on_overlap": "skip"
+      },
+      "target": {
+        "collector_id": "top",
+        "collector_ref": "swiss-23ai:top"
+      }
+    },
+    {
+      "sampler_id": "ash",
+      "enabled": false,
+      "schedule": {
+        "type": "interval",
+        "interval_sec": 10
+      },
+      "run_policy": {
+        "timeout_ms": 5000,
+        "on_overlap": "skip"
+      },
+      "target": {
+        "collector_id": "ash"
+      }
+    }
+  ]
+}

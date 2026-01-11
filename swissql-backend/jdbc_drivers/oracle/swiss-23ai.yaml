@@ -1,0 +1,43 @@
+dbType: oracle
+supportedVersions:
+  min: "11.0.0.0.0"
+  max: "23.99.99.99.99"
+description: Swiss sampler queries for Oracle 23ai
+collectors:
+  swiss:
+    description: Swiss sampler query set
+    queries:
+      locks_exclusive:
+        description: Sessions holding exclusive locks
+        sql: |
+          SELECT
+            sid lock_sid,
+            type,
+            lmode,
+            DECODE(lmode,
+              0, 'None',
+              1, 'Null',
+              2, 'Row-S (SS)',
+              3, 'Row-X (SX)',
+              4, 'Share',
+              5, 'S/Row-X (SSX)',
+              6, 'Exclusive',
+              TO_CHAR(lmode)) lock_mode_held,
+            request,
+            DECODE(request,
+              0, 'None',
+              1, 'Null',
+              2, 'Row-S (SS)',
+              3, 'Row-X (SX)',
+              4, 'Share',
+              5, 'S/Row-X (SSX)',
+              6, 'Exclusive',
+              TO_CHAR(request)) lock_mode_reqd,
+            TO_CHAR(id1) lock_lock_id1,
+            TO_CHAR(id2) lock_lock_id2,
+            ctime,
+            block
+          FROM v$lock
+          WHERE lmode = 6
+          ORDER BY sid
+        singleRow: false

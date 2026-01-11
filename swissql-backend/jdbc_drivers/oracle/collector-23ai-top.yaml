@@ -1,0 +1,107 @@
+dbType: oracle
+supportedVersions:
+  min: "12.0.0.0.0"
+  max: "23.99.99.99.99"
+description: Oracle top collector
+collectors:
+  top:
+    description: Top performance metrics using 4-layer model (Context, Resource, Wait, Load Attribution)
+    layers:
+      context:
+        description: L0 Context - Database version, topology, role, uptime
+        order: 0
+        render_hint:
+          display_type: key_value
+          title: Context
+        sql: |
+          SELECT 
+            version AS "dbVersion",
+            (sysdate - startup_time) * 86400 AS "uptimeSec",
+            instance_name AS "instance",
+            instance_role AS "role",
+            status AS "status",
+            database_type AS "dbType"
+          FROM v$instance
+        singleRow: true
+      cpu:
+        description: L1 Resource - CPU metrics
+        order: 1
+        render_hint:
+          display_type: summary_line
+          title: CPU
+        sql: |
+          SELECT 
+            ROUND((SELECT value FROM v$sysstat WHERE name = 'CPU used by this session') / 1000000, 2) "dbCpuSec",
+            ROUND((SELECT value FROM v$sysstat WHERE name = 'OS CPU Qt wait time') / 1000000, 2) "cpuWaitSec"
+          FROM dual
+        singleRow: true
+      sessions:
+        description: L1/L3 - Session metrics
+        order: 2
+        render_hint:
+          display_type: summary_line
+          title: Sessions
+        sql: |
+          SELECT COUNT(*) AS total, 
+                 SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active, 
+                 SUM(CASE WHEN status = 'ACTIVE' AND wait_class = 'CPU' THEN 1 ELSE 0 END) AS running, 
+                 SUM(CASE WHEN status = 'ACTIVE' AND wait_class != 'CPU' THEN 1 ELSE 0 END) AS waiting 
+          FROM v$session 
+          WHERE type = 'USER'
+        singleRow: true
+      waits:
+        description: L2 Wait - Top wait events
+        order: 3
+        render_hint:
+          display_type: table
+          title: Top Wait Events
+        sql: |
+          SELECT wait_class "class", 
+                 event "name", 
+                 total_waits "count", 
+                 ROUND(time_waited / 1000, 2) "timeMs", 
+                 ROUND(AVERAGE_WAIT / 1000, 2) "avgMs" 
+          FROM v$system_event 
+          WHERE wait_class != 'Idle' 
+          ORDER BY time_waited DESC 
+          FETCH FIRST 10 ROWS ONLY
+        singleRow: false
+      top_sessions:
+        description: L3 Load Attribution - Top active sessions by duration
+        order: 4
+        render_hint:
+          display_type: table
+          title: Top Sessions
+        sql: |
+          SELECT
+            s.sid,
+            s.serial#,
+            s.username,
+            s.program,
+            s.status,
+            s.wait_class,
+            NVL(s.event, 'ON CPU') "event",
+            s.last_call_et "active_duration_sec",
+            NVL(s.sql_id, 'N/A') "sql_id"
+          FROM v$session s
+          WHERE s.type = 'USER'
+            AND s.status = 'ACTIVE'
+          ORDER BY s.last_call_et DESC
+          FETCH FIRST 10 ROWS ONLY
+        singleRow: false
+      io:
+        description: L1 Resource - I/O metrics
+        order: 5
+        render_hint:
+          display_type: summary_line
+          title: I/O
+        sql: |
+          SELECT ROUND(SUM(phyrds) / 10, 2) "readIops", 
+                 ROUND(SUM(phywrts) / 10, 2) "writeIops", 
+                 SUM(phyblkrd * p.value) "readBytes", 
+                 SUM(phyblkwrt * p.value) "writeBytes", 
+                 ROUND(AVG(readtim) / 10, 2) "readLatencyMs", 
+                 ROUND(AVG(writetim) / 10, 2) "writeLatencyMs" 
+          FROM v$filestat f, v$parameter p 
+          WHERE p.name = 'db_block_size'
+        singleRow: true

@@ -1,0 +1,45 @@
+dbType: oracle
+supportedVersions:
+  min: "12.0.0.0.0"
+  max: "23.99.99.99.99"
+description: Oracle ASH sampler collector (example)
+collectors:
+  ash:
+    description: Active Session History sampling (example, 2 layers)
+    layers:
+      active_sessions:
+        description: Active sessions sampled from v$active_session_history
+        order: 0
+        render_hint:
+          display_type: table
+          title: Active Sessions (ASH)
+        sql: |
+          SELECT
+            sample_time,
+            session_id "sid",
+            session_serial# "serial#",
+            user_id,
+            sql_id,
+            session_state,
+            wait_class,
+            event
+          FROM v$active_session_history
+          WHERE sample_time >= SYSDATE - (1 / 1440)
+          ORDER BY sample_time DESC
+          FETCH FIRST 20 ROWS ONLY
+        singleRow: false
+      wait_class_summary:
+        description: Wait class distribution (last 1 minute)
+        order: 1
+        render_hint:
+          display_type: table
+          title: Wait Class Summary
+        sql: |
+          SELECT
+            wait_class,
+            COUNT(*) "samples"
+          FROM v$active_session_history
+          WHERE sample_time >= SYSDATE - (1 / 1440)
+          GROUP BY wait_class
+          ORDER BY COUNT(*) DESC
+        singleRow: false
