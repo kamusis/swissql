@@ -33,7 +33,7 @@ jobs:
             VERSION="${{ inputs.version }}"
           else
             TAG="${GITHUB_REF_NAME}"
-            VERSION="${TAG#cli/}"
+            VERSION="${TAG#cli/v}"
           fi
 
           if [[ -z "${VERSION}" ]]; then
