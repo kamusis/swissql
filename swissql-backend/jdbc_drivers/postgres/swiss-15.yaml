@@ -2,87 +2,13 @@ dbType: postgres
 supportedVersions:
   min: "15.0.0.0.0"
   max: "18.99.99.99.99"
-description: PostgreSQL 15 database collectors configuration
+description: Swiss sampler queries for PostgreSQL 15
 collectors:
-  top:
-    description: Top performance metrics using 4-layer model (Context, Resource, Wait, Load Attribution)
-    layers:
-      context:
-        description: L0 Context - Database version, topology, role, uptime
-        sql: |
-          SELECT 
-            version() AS "dbVersion",
-            EXTRACT(EPOCH FROM (now() - pg_postmaster_start_time())) AS "uptimeSec",
-            inet_server_addr()::text AS "instance",
-            CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END AS "role",
-            'UP' AS "status",
-            current_setting('server_version') AS "dbType"
-        singleRow: true
-      cpu:
-        description: L1 Resource - CPU metrics
-        sql: |
-          SELECT 
-            NULL::numeric AS "dbCpuSec",
-            NULL::numeric AS "cpuWaitSec"
-        singleRow: true
-      sessions:
-        description: L1/L3 - Session metrics
-        sql: |
-          SELECT COUNT(*) AS total, 
-                 SUM(CASE WHEN state = 'active' THEN 1 ELSE 0 END) AS active, 
-                 SUM(CASE WHEN state = 'active' AND wait_event_type IS NULL THEN 1 ELSE 0 END) AS running, 
-                 SUM(CASE WHEN state = 'active' AND wait_event_type IS NOT NULL THEN 1 ELSE 0 END) AS waiting 
-          FROM pg_stat_activity 
-          WHERE pid <> pg_backend_pid()
-        singleRow: true
-      waits:
-        description: L2 Wait - Top wait events
-        sql: |
-          SELECT COALESCE(wait_event_type, 'None') AS "class", 
-                 wait_event AS "name", 
-                 COUNT(*) AS "count", 
-                 NULL::numeric AS "timeMs", 
-                 NULL::numeric AS "avgMs" 
-          FROM pg_stat_activity 
-          WHERE wait_event IS NOT NULL 
-          GROUP BY wait_event_type, wait_event 
-          ORDER BY COUNT(*) DESC 
-          LIMIT 10
-        singleRow: false
-      topSessions:
-        description: L3 Load Attribution - Top active sessions by duration
-        sql: |
-          SELECT 
-            pid AS "sid",
-            NULL::bigint AS "serial#",
-            usename AS "username",
-            COALESCE(application_name, '') AS "program",
-            state AS "status",
-            wait_event_type AS "wait_class",
-            COALESCE(wait_event, 'ON CPU') AS "event",
-            EXTRACT(EPOCH FROM (now() - query_start))::bigint AS "active_duration_sec",
-            query_id::text AS "sql_id"
-          FROM pg_stat_activity s
-          WHERE s.state = 'active'
-          ORDER BY "active_duration_sec" DESC
-          LIMIT 10
-        singleRow: false
-      io:
-        description: L1 Resource - I/O metrics
-        sql: |
-          SELECT 
-            NULL::numeric AS "readIops", 
-            NULL::numeric AS "writeIops", 
-            (SELECT SUM(blks_read) * current_setting('block_size')::bigint FROM pg_stat_database) AS "readBytes", 
-            (SELECT (buffers_checkpoint + buffers_clean + buffers_backend) * current_setting('block_size')::bigint FROM pg_stat_bgwriter) AS "writeBytes", 
-            NULL::numeric AS "readLatencyMs", 
-            NULL::numeric AS "writeLatencyMs" 
-        singleRow: true
-  sqltext:
-    description: SQL text retrieval for explain plans
+  swiss:
+    description: Swiss sampler query set
     queries:
-      by_id:
-        description: Get SQL text by SQL ID
+      sqltext:
+        description: Get SQL text by query ID
         sql: |
           SELECT queryid::text AS sql_id, query AS sql_text, query AS sql_fulltext
           FROM pg_stat_statements
@@ -91,9 +17,17 @@ collectors:
         singleRow: true
         parameters:
           - sql_id
-  perf:
-    description: Performance diagnostics metrics (future use)
-    queries:
+      sqlplan:
+        description: Get execution plan by query ID (using EXPLAIN)
+        sql: |
+          EXPLAIN (FORMAT TEXT, ANALYZE FALSE) 
+          SELECT queryid::text AS sql_id, query AS sql_text
+          FROM pg_stat_statements
+          WHERE queryid = CAST(:sql_id AS bigint)
+          LIMIT 1
+        singleRow: false
+        parameters:
+          - sql_id
       active_transactions:
         description: Active transactions
         sql: |
@@ -127,23 +61,14 @@ collectors:
         sql: |
           SELECT 
                  spcname AS tablespace_name, 
-                 ROUND(pg_tablespace_size(oid)::numeric / 1024 / 1024 / 1024, 2) "size_gb", 
-                 NULL::numeric AS "free_gb", 
-                 NULL::numeric AS "used_percent" 
+                 ROUND(pg_tablespace_size(oid)::numeric / 1024 / 1024 / 1024, 2) "size_gb"
           FROM pg_tablespace
         singleRow: false
-  memory:
-    description: Memory and SGA/PGA allocation metrics
-    queries:
       sga_allocation:
         description: SGA pool allocation
         sql: |
           SELECT 
-            ROUND(pg_size_bytes(current_setting('shared_buffers'))/1024/1024, 2) "shared_pool_mb",
-            NULL::numeric AS "buffer_cache_mb",
-            NULL::numeric AS "log_buffer_mb",
-            NULL::numeric AS "java_pool_mb",
-            NULL::numeric AS "total_sga_mb"
+            ROUND(pg_size_bytes(current_setting('shared_buffers'))/1024/1024, 2) "shared_pool_mb"
         singleRow: true
       cache_hit_ratio:
         description: Buffer cache hit ratio
@@ -151,13 +76,9 @@ collectors:
           SELECT 
             ROUND(100 * SUM(blks_hit) / NULLIF(SUM(blks_hit) + SUM(blks_read), 0), 2) "hit_ratio_pct",
             SUM(blks_read) "physical_reads",
-            NULL::bigint AS "physical_writes",
             SUM(blks_hit) + SUM(blks_read) AS "logical_reads"
           FROM pg_stat_database
         singleRow: true
-  sessions:
-    description: Session and user activity analysis
-    queries:
       long_running_sessions:
         description: Sessions running for extended duration
         sql: |
@@ -170,13 +91,10 @@ collectors:
             COALESCE(wait_event, 'ON CPU') "current_event",
             wait_event_type AS "wait_class"
           FROM pg_stat_activity s
-          WHERE pid <> pg_backend_pid()
+          WHERE state IS NOT NULL
           ORDER BY COALESCE(query_start, backend_start)
           LIMIT 10
         singleRow: false
-  sql_analytics:
-    description: Advanced SQL analytics and efficiency metrics
-    queries:
       top_sql_by_elapsed:
         description: Top SQL by elapsed time
         sql: |
@@ -232,22 +150,13 @@ collectors:
           FROM pg_available_extensions
           WHERE name = 'pg_stat_statements' AND installed_version IS NULL
         singleRow: false
-  infrastructure:
-    description: Database infrastructure and storage metrics
-    queries:
       redo_log_info:
         description: Redo log groups and archival status
         sql: |
           SELECT 
-            NULL::int AS "group",
-            NULL::int AS "thread",
-            NULL::bigint AS "sequence",
             pg_size_bytes(current_setting('wal_segment_size')) / 1024 / 1024 AS "size_mb",
-            NULL::int AS "members",
-            CASE WHEN pg_is_in_recovery() THEN 'recovery' ELSE 'primary' END AS "status",
-            NULL::text AS "archived"
-          FROM pg_stat_wal
-        singleRow: false
+            CASE WHEN pg_is_in_recovery() THEN 'recovery' ELSE 'primary' END AS "status"
+        singleRow: true
       database_file_growth:
         description: Database file allocation and growth metrics
         sql: |

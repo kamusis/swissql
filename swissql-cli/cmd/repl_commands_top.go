@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/kamusis/swissql/swissql-cli/internal/client"
@@ -43,88 +44,115 @@ func handleReplTopCommands(
 
 // handleTopCommand executes the \top command to display top performance metrics.
 func handleTopCommand(c *client.Client, sessionId string) bool {
-	snapshot, err := c.GetTopSnapshot(sessionId)
+	snapshot, err := c.SamplerSnapshot(sessionId, "top")
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return true
 	}
 
-	renderTopSnapshot(getOutputWriter(), snapshot)
+	renderCollectorResult(getOutputWriter(), snapshot)
 	return true
 }
 
-// renderTopSnapshot renders the top snapshot with hide-when-missing logic.
-func renderTopSnapshot(w io.Writer, snapshot *client.TopSnapshot) {
-	// L0: Context header (dynamic fields)
-	fmt.Fprintf(w, "Database: %s", snapshot.DbType)
-	if snapshot.Context.Values != nil {
-		if dbVersion := getOrderedMapField(snapshot.Context, "dbVersion"); dbVersion != nil {
-			fmt.Fprintf(w, " (%s)", formatValue(dbVersion))
-		}
-		fmt.Fprintln(w)
-		// Render all context fields dynamically
-		for _, key := range snapshot.Context.Keys {
-			if key == "dbVersion" {
-				continue
-			}
-			if value, ok := snapshot.Context.Get(key); ok {
-				fmt.Fprintf(w, "  %s: %s\n", key, formatValue(value))
-			}
-		}
-	} else {
-		fmt.Fprintln(w)
+// renderCollectorResult renders collector layers dynamically, using order + render_hint.
+func renderCollectorResult(w io.Writer, snapshot *client.CollectorResult) {
+	if snapshot == nil {
+		fmt.Fprintln(w, "Error: empty snapshot")
+		return
 	}
 
-	// L1: CPU metrics (dynamic fields)
-	if snapshot.Cpu.Values != nil {
-		fmt.Fprintf(w, "CPU:")
-		for _, key := range snapshot.Cpu.Keys {
-			if value, ok := snapshot.Cpu.Get(key); ok {
-				fmt.Fprintf(w, " %s=%s", key, formatValue(value))
+	fmt.Fprintf(w, "Collector: %s", snapshot.CollectorId)
+	if strings.TrimSpace(snapshot.SourceFile) != "" {
+		fmt.Fprintf(w, " (%s)", snapshot.SourceFile)
+	}
+	if strings.TrimSpace(snapshot.DbType) != "" {
+		fmt.Fprintf(w, " db_type=%s", snapshot.DbType)
+	}
+	fmt.Fprintln(w)
+
+	if snapshot.Layers == nil || len(snapshot.Layers) == 0 {
+		fmt.Fprintln(w, "(no layers)")
+		return
+	}
+
+	type layerEntry struct {
+		id    string
+		order int
+		layer client.LayerResult
+	}
+
+	items := make([]layerEntry, 0, len(snapshot.Layers))
+	for id, layer := range snapshot.Layers {
+		items = append(items, layerEntry{id: id, order: layer.Order, layer: layer})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].order != items[j].order {
+			return items[i].order < items[j].order
+		}
+		return items[i].id < items[j].id
+	})
+
+	for _, it := range items {
+		title := it.id
+		displayType := "table"
+		preferredColumns := []string(nil)
+		if it.layer.RenderHint != nil {
+			if v, ok := it.layer.RenderHint["title"].(string); ok && strings.TrimSpace(v) != "" {
+				title = v
+			}
+			if v, ok := it.layer.RenderHint["display_type"].(string); ok && strings.TrimSpace(v) != "" {
+				displayType = strings.ToLower(strings.TrimSpace(v))
+			}
+			if v, ok := it.layer.RenderHint["preferred_columns"]; ok {
+				switch vv := v.(type) {
+				case []interface{}:
+					for _, col := range vv {
+						if s, ok := col.(string); ok {
+							preferredColumns = append(preferredColumns, s)
+						}
+					}
+				case []string:
+					preferredColumns = append(preferredColumns, vv...)
+				}
 			}
 		}
-		fmt.Fprintln(w)
-	}
 
-	// L1: Session metrics (dynamic fields)
-	if snapshot.Sessions.Values != nil {
-		fmt.Fprintf(w, "Sessions:")
-		for _, key := range snapshot.Sessions.Keys {
-			if value, ok := snapshot.Sessions.Get(key); ok {
-				fmt.Fprintf(w, " %s=%s", key, formatValue(value))
+		rows := it.layer.Rows
+		fmt.Fprintf(w, "\n%s:\n", title)
+		if displayType == "summary_line" && len(rows) > 0 {
+			// Minimal summary renderer: print all fields of first row as k=v.
+			first := rows[0]
+			keys := make([]string, 0, len(first))
+			for k := range first {
+				keys = append(keys, k)
 			}
-		}
-		fmt.Fprintln(w)
-	}
-
-	// L2: Wait events (dynamic list of maps)
-	if len(snapshot.Waits) > 0 {
-		fmt.Fprintf(w, "\nTop Wait Events:\n")
-		renderDynamicTable(w, snapshot.Waits, nil) // nil = auto-detect all columns
-	}
-
-	// L3: Top sessions (dynamic list of maps)
-	if len(snapshot.TopSessions) > 0 {
-		fmt.Fprintf(w, "\nTop Sessions:\n")
-		renderDynamicTable(w, snapshot.TopSessions, nil) // nil = auto-detect all columns
-	}
-
-	// L1: I/O metrics (dynamic fields)
-	if snapshot.Io.Values != nil {
-		fmt.Fprintf(w, "\nI/O:")
-		for _, key := range snapshot.Io.Keys {
-			if value, ok := snapshot.Io.Get(key); ok {
-				fmt.Fprintf(w, " %s=%s", key, formatValue(value))
+			sort.Strings(keys)
+			for _, k := range keys {
+				fmt.Fprintf(w, "  %s=%s", k, formatValue(first[k]))
 			}
+			fmt.Fprintln(w)
+			continue
 		}
-		fmt.Fprintln(w)
+
+		renderDynamicTable(w, rowsToOrderedMaps(rows), preferredColumns)
 	}
 }
 
-// getOrderedMapField gets a field from an OrderedMap with type safety.
-func getOrderedMapField(m client.OrderedMap, key string) interface{} {
-	v, _ := m.Get(key)
-	return v
+func rowsToOrderedMaps(rows []map[string]any) []client.OrderedMap {
+	out := make([]client.OrderedMap, 0, len(rows))
+	for _, r := range rows {
+		m := client.OrderedMap{Values: map[string]any{}}
+		keys := make([]string, 0, len(r))
+		for k := range r {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			m.Set(k, r[k])
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // formatValue formats a value for display, handling various numeric types.
@@ -170,7 +198,7 @@ func renderDynamicTable(w io.Writer, rows []client.OrderedMap, preferredColumns 
 			}
 		}
 	} else {
-		// Use JSON/object key order from the first row
+		// Use key order from the first row
 		availableColumns = append(availableColumns, rows[0].Keys...)
 	}
 

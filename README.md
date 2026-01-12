@@ -159,6 +159,16 @@ The backend currently implements the following REST endpoints:
   - `GET /v1/sessions/validate?session_id=...`
 - **SQL execution**
   - `POST /v1/execute_sql`
+- **Collectors (YAML-defined tools)**
+  - `GET /v1/collectors/list?session_id=...`
+  - `GET /v1/collectors/queries?session_id=...&collector_id=...`
+  - `POST /v1/collectors/run`
+- **Samplers (session-scoped resources)**
+  - `PUT /v1/sessions/{session_id}/samplers/{sampler_id}`
+  - `DELETE /v1/sessions/{session_id}/samplers/{sampler_id}`
+  - `GET /v1/sessions/{session_id}/samplers`
+  - `GET /v1/sessions/{session_id}/samplers/{sampler_id}`
+  - `GET /v1/sessions/{session_id}/samplers/{sampler_id}/snapshot`
 - **Metadata helpers**
   - `GET /v1/meta/list?session_id=...&kind=table|view&schema=...`
   - `GET /v1/meta/describe?session_id=...&name=...&detail=full`
@@ -188,6 +198,13 @@ The CLI currently provides an interactive REPL with the following commands:
   - `\dt | \dv` (list tables/views)
   - `\explain <sql>` (aliases: `explain`, `explain plan for`) (show execution plan)
   - `\explain analyze <sql>` (alias: `explain analyze`) (show actual execution plan; executes the statement)
+  - `\top` (render latest sampler snapshot for `top`)
+  - `\sampler <action> <sampler_id>` (control samplers)
+  - `\swiss list` (list available collectors)
+  - `\swiss list queries [--collector=<collector_id>]` (list runnable queries under `queries:` blocks)
+  - `\swiss run <query_id> [--param=value]` (run a query; auto-resolve collector)
+  - `\swiss run <collector_id|collector_ref> <query_id> [--param=value]` (run a query; explicit collector)
+  - `\watch <command>` (repeatedly execute a command (e.g., `\watch top`))
   - `\i <file>` (alias: `@<file>`) (execute statements from a file)
   - `\x [on|off]` (expanded display mode)
   - `\o <file>` (redirect query output to a file)
@@ -236,6 +253,12 @@ mvn -f swissql-backend/pom.xml spring-boot:run
 ```
 
 The backend should start on localhost (see Spring Boot defaults / project configuration).
+
+If you want to use the local configuration, set the `SPRING_PROFILES_ACTIVE` environment variable to `local` before starting the backend:
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE = "local"
+```
 
 You can verify it via:
 

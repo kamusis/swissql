@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"runtime"
@@ -123,7 +124,10 @@ func parseDisplayWidthArg(s string) (int, error) {
 
 func renderResponse(cmd *cobra.Command, resp *client.ExecuteResponse) {
 	w := getOutputWriter()
-	plainFlag, _ := cmd.Flags().GetBool("plain")
+	plainFlag := false
+	if cmd != nil {
+		plainFlag, _ = cmd.Flags().GetBool("plain")
+	}
 
 	// Fast path: non-paging targets (pipes, redirects, files)
 	if !shouldPageOutput(w) {
@@ -272,7 +276,10 @@ func selectPagerCommand() (string, []string) {
 // - user explicitly set --plain, or
 // - paging is active on Windows (less/more often render Unicode poorly).
 func shouldForcePlainBorders(cmd *cobra.Command, paging bool) bool {
-	plainFlag, _ := cmd.Flags().GetBool("plain")
+	plainFlag := false
+	if cmd != nil {
+		plainFlag, _ = cmd.Flags().GetBool("plain")
+	}
 	if plainFlag {
 		return true
 	}
@@ -316,7 +323,7 @@ func renderTabularDelimited(w io.Writer, resp *client.ExecuteResponse, comma run
 	for _, row := range resp.Data.Rows {
 		values := make([]string, len(resp.Data.Columns))
 		for i, col := range resp.Data.Columns {
-			cell := fmt.Sprintf("%v", row[col.Name])
+			cell := formatCellValue(row[col.Name])
 			values[i] = normalizeCellForDelimited(cell)
 		}
 		_ = csvWriter.Write(values)
@@ -334,13 +341,75 @@ func normalizeCellForDelimited(cell string) string {
 	return strings.ReplaceAll(cell, "\r\n", "\n")
 }
 
+func formatCellValue(v any) string {
+	if v == nil {
+		return ""
+	}
+
+	switch t := v.(type) {
+	case string:
+		return t
+	case []byte:
+		return string(t)
+	case bool:
+		if t {
+			return "true"
+		}
+		return "false"
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			return strconv.FormatInt(i, 10)
+		}
+		return t.String()
+	case int:
+		return strconv.Itoa(t)
+	case int8:
+		return strconv.FormatInt(int64(t), 10)
+	case int16:
+		return strconv.FormatInt(int64(t), 10)
+	case int32:
+		return strconv.FormatInt(int64(t), 10)
+	case int64:
+		return strconv.FormatInt(t, 10)
+	case uint:
+		return strconv.FormatUint(uint64(t), 10)
+	case uint8:
+		return strconv.FormatUint(uint64(t), 10)
+	case uint16:
+		return strconv.FormatUint(uint64(t), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(t), 10)
+	case uint64:
+		return strconv.FormatUint(t, 10)
+	case float32:
+		f := float64(t)
+		if !math.IsNaN(f) && !math.IsInf(f, 0) && math.Trunc(f) == f {
+			if f >= math.MinInt64 && f <= math.MaxInt64 {
+				return strconv.FormatInt(int64(f), 10)
+			}
+			return strconv.FormatFloat(f, 'f', 0, 64)
+		}
+		return strconv.FormatFloat(f, 'g', -1, 64)
+	case float64:
+		if !math.IsNaN(t) && !math.IsInf(t, 0) && math.Trunc(t) == t {
+			if t >= math.MinInt64 && t <= math.MaxInt64 {
+				return strconv.FormatInt(int64(t), 10)
+			}
+			return strconv.FormatFloat(t, 'f', 0, 64)
+		}
+		return strconv.FormatFloat(t, 'g', -1, 64)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 func renderTabularExpanded(w io.Writer, resp *client.ExecuteResponse) {
 	for rowIdx, row := range resp.Data.Rows {
 		if rowIdx > 0 {
 			fmt.Fprintln(w)
 		}
 		for _, col := range resp.Data.Columns {
-			cell := fmt.Sprintf("%v", row[col.Name])
+			cell := formatCellValue(row[col.Name])
 			cell = normalizeCellForExpanded(col.Name, cell)
 			fmt.Fprintf(w, "%s: %s\n", col.Name, cell)
 		}
@@ -368,7 +437,10 @@ func renderTabularTable(cmd *cobra.Command, w io.Writer, resp *client.ExecuteRes
 		},
 	}))
 
-	plainFlag, _ := cmd.Flags().GetBool("plain")
+	plainFlag := false
+	if cmd != nil {
+		plainFlag, _ = cmd.Flags().GetBool("plain")
+	}
 	if forcePlain || plainFlag {
 		table.Options(tablewriter.WithSymbols(&tw.SymbolASCII{}))
 	}
@@ -382,7 +454,7 @@ func renderTabularTable(cmd *cobra.Command, w io.Writer, resp *client.ExecuteRes
 	for _, row := range resp.Data.Rows {
 		values := make([]any, len(resp.Data.Columns))
 		for i, col := range resp.Data.Columns {
-			cell := fmt.Sprintf("%v", row[col.Name])
+			cell := formatCellValue(row[col.Name])
 			values[i] = normalizeCellForTable(col.Name, cell)
 		}
 		table.Append(values...)

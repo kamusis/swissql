@@ -14,6 +14,7 @@ import (
 
 	"github.com/peterh/liner"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // handleReplHelp prints the REPL help text.
@@ -24,52 +25,7 @@ func handleReplHelp(line *liner.State, historyMode string, input string) bool {
 	if shouldRecordHistory(historyMode, input, false) {
 		line.AppendHistory(input)
 	}
-
-	fmt.Println("Commands:")
-	fmt.Println("")
-	fmt.Println("[CLI]")
-	fmt.Println("  help                          Show this help")
-	fmt.Println("  connect <dsn>                 Connect to a database and create a named session")
-	fmt.Println("  list drivers                  List JDBC drivers loaded by backend")
-	fmt.Println("  reload drivers                Rescan and reload JDBC drivers on backend")
-	fmt.Println("  detach                        Leave REPL without disconnecting (like tmux detach)")
-	fmt.Println("  exit | quit                   Disconnect backend session and remove it from registry")
-	fmt.Println("  set display wide|narrow       Toggle truncation mode for tabular output")
-	fmt.Println("  set display expanded on|off   Expanded display mode")
-	fmt.Println("  set display width <n>         Set max column width for tabular output")
-	fmt.Println("  set dbtype <dbtype>           Set dbType for /ai in empty REPL (before connect)")
-	fmt.Println("  set output table|csv|tsv|json Set output format")
-	fmt.Println("")
-	fmt.Println("[psql-compat (\\)]")
-	fmt.Println("  \\conninfo                     Show current session and backend information")
-	fmt.Println("  \\d <name>                     Describe a table/view (alias: desc)")
-	fmt.Println("  \\d+ <name>                    Describe with more details (alias: desc+)")
-	fmt.Println("  \\dt | \\dv                     List tables/views")
-	fmt.Println("  \\explain <sql>                Show execution plan (alias: explain, explain plan for)")
-	fmt.Println("  \\explain analyze <sql>        Show actual execution plan (executes the statement) (alias: explain analyze)")
-	fmt.Println("  \\sqltext <sql_id>             Get SQL text by ID")
-	fmt.Println("  \\plan <sql_id>               Get execution plan for SQL by ID")
-	fmt.Println("  \\top                          Show top performance metrics")
-	fmt.Println("  \\sampler <action> <sampler>   Control samplers (explicit)")
-	fmt.Println("                               Actions: start|stop|restart|status")
-	fmt.Println("                               Samplers: top")
-	fmt.Println("  \\watch <command>             Repeatedly execute a command (e.g., \\watch \\top)")
-	fmt.Println("  \\i <file>                     Execute statements from a file (alias: @<file>)")
-	fmt.Println("  \\x [on|off]                   Expanded display mode (same as set display expanded on|off)")
-	fmt.Println("  \\o <file>                     Redirect query output to a file")
-	fmt.Println("  \\o                            Restore output to stdout")
-	fmt.Println("")
-	fmt.Println("[AI (/)]")
-	fmt.Println("  /ai <prompt>                  Generate SQL via AI and confirm before execution")
-	fmt.Println("  /context show                 Show recent executed SQL context used by AI")
-	fmt.Println("  /context clear                Clear AI context")
-	fmt.Println("")
-	fmt.Println("Notes:")
-	fmt.Println("  - End a statement with ';' to execute")
-	fmt.Println("  - Samplers do not auto-start on connect. Example:")
-	fmt.Println("      connect <dsn>")
-	fmt.Println("      \\sampler start top")
-	fmt.Println("      \\top")
+	printReplHelp(getOutputWriter())
 	return true
 }
 
@@ -317,9 +273,9 @@ func handleReplWatch(
 	watchCommand := strings.Join(args, " ")
 	interval := 10 * time.Second
 
-	// Try to get interval from snapshot if available
-	if snapshot, err := c.GetTopSnapshot(sessionId); err == nil && snapshot.IntervalSec > 0 {
-		interval = time.Duration(snapshot.IntervalSec) * time.Second
+	// Try to get interval from sampler snapshot if available
+	if snapshot, err := c.SamplerSnapshot(sessionId, "top"); err == nil && snapshot.IntervalSec != nil && *snapshot.IntervalSec > 0 {
+		interval = time.Duration(*snapshot.IntervalSec) * time.Second
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -328,7 +284,32 @@ func handleReplWatch(
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	fmt.Printf("Watching: %s (interval: %v, Ctrl+C to stop)\n\n", watchCommand, interval)
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err == nil {
+		defer func() {
+			_ = term.Restore(int(os.Stdin.Fd()), oldState)
+		}()
+	}
+
+	quitChan := make(chan struct{}, 1)
+	go func() {
+		buf := make([]byte, 1)
+		for {
+			n, readErr := os.Stdin.Read(buf)
+			if readErr != nil {
+				return
+			}
+			if n == 1 {
+				b := buf[0]
+				if b == 'q' || b == 'Q' {
+					quitChan <- struct{}{}
+					return
+				}
+			}
+		}
+	}()
+
+	fmt.Printf("Watching: %s (interval: %v, Ctrl+C or 'q' to stop)\n\n", watchCommand, interval)
 
 	// Execute immediately first
 	fmt.Print("\033[H\033[2J")
@@ -351,6 +332,10 @@ func handleReplWatch(
 			fmt.Println("\nWatch stopped")
 			return true
 
+		case <-quitChan:
+			fmt.Println("\nWatch stopped")
+			return true
+
 		case <-ctx.Done():
 			return true
 		}
@@ -367,56 +352,33 @@ func executeWatchCommand(
 	sessionId string,
 	cfg *config.Config,
 ) {
-	// Parse the command
-	parts := strings.Fields(input)
-	if len(parts) == 0 {
+	dispatchCtx := &replDispatchContext{
+		Cmd:         cmd,
+		Line:        line,
+		HistoryMode: historyMode,
+		Input:       strings.TrimSpace(input),
+		Lower:       strings.ToLower(strings.TrimSpace(input)),
+		Client:      c,
+		SessionId:   &sessionId,
+		Cfg:         cfg,
+		WatchMode:   true,
+	}
+
+	if handled, _ := dispatchReplLine(dispatchCtx); handled {
+		return
+	}
+	if handled, _ := dispatchReplMeta(dispatchCtx); handled {
 		return
 	}
 
-	cmdName := parts[0]
-	var args []string
-	if len(parts) > 1 {
-		args = parts[1:]
-	}
-
-	// Try to execute through the various command handlers
-	// Check meta commands first
-	if strings.HasPrefix(cmdName, "\\") {
-		if handleReplMetaCommands(cmd, line, historyMode, input, cmdName, args, c, sessionId, cfg) {
-			return
-		}
-		if handleReplTopCommands(cmd, line, historyMode, input, cmdName, args, c, sessionId, cfg) {
-			return
-		}
-	} else {
-		// Try to match without backslash for convenience (e.g., "top" -> "\top")
-		fullCmdName := "\\" + cmdName
-		if handleReplMetaCommands(cmd, line, historyMode, input, fullCmdName, args, c, sessionId, cfg) {
-			return
-		}
-		if handleReplTopCommands(cmd, line, historyMode, input, fullCmdName, args, c, sessionId, cfg) {
-			return
-		}
-	}
-
-	// Check other CLI commands
-	if handled, _ := handleReplDetachExit(cmd, line, historyMode, input, c, sessionId, "", cfg); handled {
-		return
-	}
-	if handleReplSetDisplay(line, historyMode, input, cfg) {
-		return
-	}
-	if handleReplSetOutput(line, historyMode, input, cfg) {
-		return
-	}
-
-	// If it's a SQL statement, try to execute it
 	if strings.Contains(input, ";") {
-		// SQL statements are executed in the main REPL loop
-		// In watch mode, we can't easily execute them without the full context
 		fmt.Printf("SQL execution in watch mode is not supported\n")
 		return
 	}
 
-	fmt.Printf("Unknown command in watch mode: %s\n", cmdName)
+	parts := strings.Fields(strings.TrimSpace(input))
+	if len(parts) == 0 {
+		return
+	}
+	fmt.Printf("Unknown command in watch mode: %s\n", parts[0])
 }

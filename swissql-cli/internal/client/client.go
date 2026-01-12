@@ -20,6 +20,42 @@ type Client struct {
 	Timeout    time.Duration
 }
 
+func (c *Client) SamplerStatus(sessionId string, samplerId string) (*SamplerStatusResponse, error) {
+	urlStr := fmt.Sprintf("%s/v1/sessions/%s/samplers/%s", c.BaseURL, url.PathEscape(sessionId), url.PathEscape(samplerId))
+	body, err := c.get(urlStr)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp SamplerStatusResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// CollectorsQueriesList lists runnable queries defined under YAML `queries:` blocks.
+func (c *Client) CollectorsQueriesList(sessionId string, collectorId string) (*CollectorsQueriesListResponse, error) {
+	q := url.Values{}
+	q.Set("session_id", sessionId)
+	if strings.TrimSpace(collectorId) != "" {
+		q.Set("collector_id", collectorId)
+	}
+	urlStr := fmt.Sprintf("%s/v1/collectors/queries?%s", c.BaseURL, q.Encode())
+	body, err := c.get(urlStr)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp CollectorsQueriesListResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func NewClient(baseURL string, timeout time.Duration) *Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = (&net.Dialer{Timeout: timeout}).DialContext
@@ -101,17 +137,6 @@ type DriversResponse struct {
 type DriversReloadResponse struct {
 	Status   string                 `json:"status"`
 	Reloaded map[string]interface{} `json:"reloaded"`
-}
-
-type TopSamplerControlResponse struct {
-	Message string `json:"message"`
-	Status  string `json:"status"`
-	Reason  string `json:"reason"`
-}
-
-type TopSamplerStatusResponse struct {
-	Status string `json:"status"`
-	Reason string `json:"reason"`
 }
 
 type DriverEntry struct {
@@ -277,78 +302,6 @@ func (c *Client) MetaDescribe(sessionId string, name string, detail string) (*Ex
 	defer body.Close()
 
 	var resp ExecuteResponse
-	if err := json.NewDecoder(body).Decode(&resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) TopSamplerStart(sessionId string) (*TopSamplerControlResponse, error) {
-	q := url.Values{}
-	q.Set("session_id", sessionId)
-	urlStr := fmt.Sprintf("%s/v1/top/start?%s", c.BaseURL, q.Encode())
-
-	body, err := c.post(urlStr, map[string]interface{}{})
-	if err != nil {
-		return nil, err
-	}
-	defer body.Close()
-
-	var resp TopSamplerControlResponse
-	if err := json.NewDecoder(body).Decode(&resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) TopSamplerStop(sessionId string) (*TopSamplerControlResponse, error) {
-	q := url.Values{}
-	q.Set("session_id", sessionId)
-	urlStr := fmt.Sprintf("%s/v1/top/stop?%s", c.BaseURL, q.Encode())
-
-	body, err := c.post(urlStr, map[string]interface{}{})
-	if err != nil {
-		return nil, err
-	}
-	defer body.Close()
-
-	var resp TopSamplerControlResponse
-	if err := json.NewDecoder(body).Decode(&resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) TopSamplerRestart(sessionId string) (*TopSamplerControlResponse, error) {
-	q := url.Values{}
-	q.Set("session_id", sessionId)
-	urlStr := fmt.Sprintf("%s/v1/top/restart?%s", c.BaseURL, q.Encode())
-
-	body, err := c.post(urlStr, map[string]interface{}{})
-	if err != nil {
-		return nil, err
-	}
-	defer body.Close()
-
-	var resp TopSamplerControlResponse
-	if err := json.NewDecoder(body).Decode(&resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *Client) TopSamplerStatus(sessionId string) (*TopSamplerStatusResponse, error) {
-	q := url.Values{}
-	q.Set("session_id", sessionId)
-	urlStr := fmt.Sprintf("%s/v1/top/status?%s", c.BaseURL, q.Encode())
-
-	body, err := c.get(urlStr)
-	if err != nil {
-		return nil, err
-	}
-	defer body.Close()
-
-	var resp TopSamplerStatusResponse
 	if err := json.NewDecoder(body).Decode(&resp); err != nil {
 		return nil, err
 	}
@@ -601,6 +554,72 @@ func (c *Client) post(url string, body interface{}) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
+func (c *Client) put(urlStr string, body interface{}) (io.ReadCloser, error) {
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, urlStr, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		var errResp ErrorResponse
+		json.NewDecoder(resp.Body).Decode(&errResp)
+		resp.Body.Close()
+		if errResp.Code != "" {
+			kind := ApiErrorKindAPI
+			msg := errResp.Message
+			if errResp.Code == "EXECUTION_ERROR" {
+				kind = ApiErrorKindDB
+				msg = sanitizeDbErrorMessage(msg)
+			}
+			return nil, &ApiError{Kind: kind, Status: resp.StatusCode, Code: errResp.Code, Message: msg, TraceId: errResp.TraceId}
+		}
+		return nil, &ApiError{Kind: ApiErrorKindAPI, Status: resp.StatusCode, Message: fmt.Sprintf("status=%d", resp.StatusCode)}
+	}
+
+	return resp.Body, nil
+}
+
+func (c *Client) delete(urlStr string) (io.ReadCloser, error) {
+	req, err := http.NewRequest(http.MethodDelete, urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		var errResp ErrorResponse
+		json.NewDecoder(resp.Body).Decode(&errResp)
+		resp.Body.Close()
+		if errResp.Code != "" {
+			kind := ApiErrorKindAPI
+			msg := errResp.Message
+			if errResp.Code == "EXECUTION_ERROR" {
+				kind = ApiErrorKindDB
+				msg = sanitizeDbErrorMessage(msg)
+			}
+			return nil, &ApiError{Kind: kind, Status: resp.StatusCode, Code: errResp.Code, Message: msg, TraceId: errResp.TraceId}
+		}
+		return nil, &ApiError{Kind: ApiErrorKindAPI, Status: resp.StatusCode, Message: fmt.Sprintf("status=%d", resp.StatusCode)}
+	}
+
+	return resp.Body, nil
+}
+
 func (c *Client) getWithTimeout(urlStr string) (*http.Response, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.Timeout)
 	defer cancel()
@@ -680,59 +699,204 @@ func (c *Client) get(urlStr string) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
-// TopSnapshot represents the top performance metrics snapshot
-type TopSnapshot struct {
-	DbType      string       `json:"db_type"`
-	IntervalSec int          `json:"interval_sec"`
-	Context     OrderedMap   `json:"context"`
-	Cpu         OrderedMap   `json:"cpu"`
-	Sessions    OrderedMap   `json:"sessions"`
-	Waits       []OrderedMap `json:"waits"`
-	TopSessions []OrderedMap `json:"top_sessions"`
-	Io          OrderedMap   `json:"io"`
+type SamplerSchedule struct {
+	Type          string `json:"type,omitempty"`
+	IntervalSec   *int   `json:"interval_sec,omitempty"`
+	Cron          string `json:"cron,omitempty"`
+	Timezone      string `json:"timezone,omitempty"`
+	StartDelaySec *int   `json:"start_delay_sec,omitempty"`
+	JitterSec     *int   `json:"jitter_sec,omitempty"`
 }
 
-// GetTopSnapshot retrieves the top performance snapshot
-func (c *Client) GetTopSnapshot(sessionId string) (*TopSnapshot, error) {
-	url := fmt.Sprintf("%s/v1/top/snapshot?session_id=%s", c.BaseURL, url.QueryEscape(sessionId))
-	body, err := c.get(url)
+type SamplerRunPolicy struct {
+	TimeoutMs      *int   `json:"timeout_ms,omitempty"`
+	MaxConcurrency *int   `json:"max_concurrency,omitempty"`
+	OnOverlap      string `json:"on_overlap,omitempty"`
+	ErrorPolicy    string `json:"error_policy,omitempty"`
+}
+
+type SamplerTarget struct {
+	CollectorId  string `json:"collector_id,omitempty"`
+	CollectorRef string `json:"collector_ref,omitempty"`
+}
+
+type SamplerDefinition struct {
+	SamplerId    string            `json:"sampler_id,omitempty"`
+	Enabled      *bool             `json:"enabled,omitempty"`
+	Schedule     *SamplerSchedule  `json:"schedule,omitempty"`
+	RunPolicy    *SamplerRunPolicy `json:"run_policy,omitempty"`
+	ResultPolicy map[string]any    `json:"result_policy,omitempty"`
+	Target       *SamplerTarget    `json:"target,omitempty"`
+}
+
+type SamplerControlResponse struct {
+	SamplerId string `json:"sampler_id"`
+	Status    string `json:"status"`
+	Reason    string `json:"reason"`
+}
+
+type SamplerStatusResponse struct {
+	SamplerId string `json:"sampler_id"`
+	Status    string `json:"status"`
+	Reason    string `json:"reason"`
+}
+
+type SamplersListResponse struct {
+	Samplers []string `json:"samplers"`
+}
+
+type LayerResult struct {
+	Order      int              `json:"order"`
+	RenderHint map[string]any   `json:"render_hint,omitempty"`
+	Rows       []map[string]any `json:"rows,omitempty"`
+}
+
+type CollectorResult struct {
+	DbType      string                 `json:"db_type"`
+	IntervalSec *int                   `json:"interval_sec,omitempty"`
+	CollectorId string                 `json:"collector_id"`
+	SourceFile  string                 `json:"source_file"`
+	Layers      map[string]LayerResult `json:"layers"`
+	Queries     map[string]any         `json:"queries"`
+}
+
+type QueryResult struct {
+	DbType      string          `json:"db_type"`
+	CollectorId string          `json:"collector_id"`
+	SourceFile  string          `json:"source_file"`
+	QueryId     string          `json:"query_id"`
+	Description string          `json:"description"`
+	RenderHint  map[string]any  `json:"render_hint"`
+	Result      ExecuteResponse `json:"result"`
+}
+
+type CollectorCandidate struct {
+	CollectorId  string `json:"collector_id"`
+	CollectorRef string `json:"collector_ref"`
+	SourceFile   string `json:"source_file"`
+	Description  string `json:"description"`
+}
+
+type CollectorsListResponse struct {
+	Collectors []CollectorCandidate `json:"collectors"`
+}
+
+type CollectorQueryCandidate struct {
+	CollectorId  string `json:"collector_id"`
+	CollectorRef string `json:"collector_ref"`
+	SourceFile   string `json:"source_file"`
+	QueryId      string `json:"query_id"`
+	Description  string `json:"description"`
+}
+
+type CollectorsQueriesListResponse struct {
+	Queries []CollectorQueryCandidate `json:"queries"`
+}
+
+type CollectorsRunRequest struct {
+	SessionId    string         `json:"session_id"`
+	CollectorId  string         `json:"collector_id,omitempty"`
+	CollectorRef string         `json:"collector_ref,omitempty"`
+	QueryId      string         `json:"query_id,omitempty"`
+	Params       map[string]any `json:"params,omitempty"`
+}
+
+func (c *Client) SamplerUpsert(sessionId string, samplerId string, definition *SamplerDefinition) (*SamplerControlResponse, error) {
+	urlStr := fmt.Sprintf("%s/v1/sessions/%s/samplers/%s", c.BaseURL, url.PathEscape(sessionId), url.PathEscape(samplerId))
+	body, err := c.put(urlStr, definition)
 	if err != nil {
 		return nil, err
 	}
 	defer body.Close()
 
-	var snapshot TopSnapshot
-	if err := json.NewDecoder(body).Decode(&snapshot); err != nil {
-		return nil, fmt.Errorf("failed to decode snapshot: %w", err)
+	var resp SamplerControlResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
 	}
-
-	// Debug log
-	// fmt.Fprintf(os.Stderr, "DEBUG: Received snapshot with topSessions size: %d\n", len(snapshot.TopSessions))
-
-	return &snapshot, nil
+	return &resp, nil
 }
 
-// SqlTextResponse represents the SQL text response
-type SqlTextResponse struct {
-	SqlId     string `json:"sql_id"`
-	Text      string `json:"text"`
-	Truncated bool   `json:"truncated"`
-}
-
-// GetSqlText retrieves SQL text by ID
-func (c *Client) GetSqlText(sessionId, sqlId string) (*SqlTextResponse, error) {
-	url := fmt.Sprintf("%s/v1/meta/sqltext?session_id=%s&sql_id=%s",
-		c.BaseURL, url.QueryEscape(sessionId), url.QueryEscape(sqlId))
-	body, err := c.get(url)
+func (c *Client) SamplerDelete(sessionId string, samplerId string) (*SamplerControlResponse, error) {
+	urlStr := fmt.Sprintf("%s/v1/sessions/%s/samplers/%s", c.BaseURL, url.PathEscape(sessionId), url.PathEscape(samplerId))
+	body, err := c.delete(urlStr)
 	if err != nil {
 		return nil, err
 	}
 	defer body.Close()
 
-	var response SqlTextResponse
-	if err := json.NewDecoder(body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("failed to decode sql text: %w", err)
+	var resp SamplerControlResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) SamplersList(sessionId string) (*SamplersListResponse, error) {
+	urlStr := fmt.Sprintf("%s/v1/sessions/%s/samplers", c.BaseURL, url.PathEscape(sessionId))
+	body, err := c.get(urlStr)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp SamplersListResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) SamplerSnapshot(sessionId string, samplerId string) (*CollectorResult, error) {
+	urlStr := fmt.Sprintf("%s/v1/sessions/%s/samplers/%s/snapshot", c.BaseURL, url.PathEscape(sessionId), url.PathEscape(samplerId))
+	body, err := c.get(urlStr)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp CollectorResult
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) CollectorsList(sessionId string) (*CollectorsListResponse, error) {
+	q := url.Values{}
+	q.Set("session_id", sessionId)
+	urlStr := fmt.Sprintf("%s/v1/collectors/list?%s", c.BaseURL, q.Encode())
+	body, err := c.get(urlStr)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var resp CollectorsListResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) CollectorsRun(req *CollectorsRunRequest) (*CollectorResult, *QueryResult, error) {
+	urlStr := fmt.Sprintf("%s/v1/collectors/run", c.BaseURL)
+	body, err := c.post(urlStr, req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer body.Close()
+
+	if req != nil && strings.TrimSpace(req.QueryId) != "" {
+		var qr QueryResult
+		if err := json.NewDecoder(body).Decode(&qr); err != nil {
+			return nil, nil, err
+		}
+		return nil, &qr, nil
 	}
 
-	return &response, nil
+	var cr CollectorResult
+	if err := json.NewDecoder(body).Decode(&cr); err != nil {
+		return nil, nil, err
+	}
+	return &cr, nil, nil
 }

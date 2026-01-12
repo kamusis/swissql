@@ -11,12 +11,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const supportedSamplerTop = "top"
-
-func supportedSamplersList() string {
-	return supportedSamplerTop
-}
-
 func supportedSamplerActionsList() string {
 	return "start, stop, restart, status"
 }
@@ -47,7 +41,7 @@ func handleReplSamplerCommands(
 	}
 
 	if len(args) < 2 {
-		fmt.Printf("Error: missing sampler. Supported samplers: %s\n", supportedSamplersList())
+		fmt.Printf("Error: missing sampler. Usage: \\sampler <start|stop|restart|status> <sampler_id>\n")
 		fmt.Printf("Usage: \\sampler <start|stop|restart|status> <sampler>\n")
 		return true
 	}
@@ -55,43 +49,49 @@ func handleReplSamplerCommands(
 	action := strings.ToLower(strings.TrimSpace(args[0]))
 	sampler := strings.ToLower(strings.TrimSpace(args[1]))
 
-	if sampler != supportedSamplerTop {
-		fmt.Printf("Error: unsupported sampler: %s. Supported samplers: %s\n", sampler, supportedSamplersList())
-		return true
-	}
-
 	switch action {
 	case "start":
-		resp, err := c.TopSamplerStart(sessionId)
+		enabled := true
+		def := &client.SamplerDefinition{
+			Enabled: &enabled,
+		}
+		resp, err := c.SamplerUpsert(sessionId, sampler, def)
 		if err != nil {
 			fmt.Printf("%v\n", err)
 			return true
 		}
-		printTopSamplerControlResponse(resp)
+		printSamplerControlResponse(resp)
 		return true
 	case "stop":
-		resp, err := c.TopSamplerStop(sessionId)
+		resp, err := c.SamplerDelete(sessionId, sampler)
 		if err != nil {
 			fmt.Printf("%v\n", err)
 			return true
 		}
-		printTopSamplerControlResponse(resp)
+		printSamplerControlResponse(resp)
 		return true
 	case "restart":
-		resp, err := c.TopSamplerRestart(sessionId)
+		_, err := c.SamplerDelete(sessionId, sampler)
 		if err != nil {
 			fmt.Printf("%v\n", err)
 			return true
 		}
-		printTopSamplerControlResponse(resp)
+		enabled := true
+		def := &client.SamplerDefinition{Enabled: &enabled}
+		resp, err := c.SamplerUpsert(sessionId, sampler, def)
+		if err != nil {
+			fmt.Printf("%v\n", err)
+			return true
+		}
+		printSamplerControlResponse(resp)
 		return true
 	case "status":
-		resp, err := c.TopSamplerStatus(sessionId)
+		resp, err := c.SamplerStatus(sessionId, sampler)
 		if err != nil {
 			fmt.Printf("%v\n", err)
 			return true
 		}
-		printTopSamplerStatusResponse(resp)
+		printSamplerStatusResponse(resp)
 		return true
 	default:
 		fmt.Printf("Error: unsupported action: %s. Supported actions: %s\n", action, supportedSamplerActionsList())
@@ -99,19 +99,19 @@ func handleReplSamplerCommands(
 	}
 }
 
-func printTopSamplerControlResponse(resp *client.TopSamplerControlResponse) {
+func printSamplerControlResponse(resp *client.SamplerControlResponse) {
 	if resp == nil {
 		fmt.Println("Error: empty response")
 		return
 	}
 	if strings.TrimSpace(resp.Reason) != "" {
-		fmt.Printf("%s (status=%s, reason=%s)\n", resp.Message, resp.Status, resp.Reason)
+		fmt.Printf("%s (status=%s, reason=%s)\n", resp.SamplerId, resp.Status, resp.Reason)
 		return
 	}
-	fmt.Printf("%s (status=%s)\n", resp.Message, resp.Status)
+	fmt.Printf("%s (status=%s)\n", resp.SamplerId, resp.Status)
 }
 
-func printTopSamplerStatusResponse(resp *client.TopSamplerStatusResponse) {
+func printSamplerStatusResponse(resp *client.SamplerStatusResponse) {
 	if resp == nil {
 		fmt.Println("Error: empty response")
 		return

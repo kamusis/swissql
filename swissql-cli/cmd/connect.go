@@ -23,6 +23,7 @@ var connectCmd = &cobra.Command{
 		name, _ := cmd.Flags().GetString("name")
 		timeout, _ := cmd.Flags().GetInt("connection-timeout")
 		useMcp, _ := cmd.Flags().GetBool("use-mcp")
+		disconnectCurrent, _ := cmd.Flags().GetBool("disconnect-current")
 
 		dbType := "oracle" // Default
 		if parsed, err := url.Parse(dsn); err == nil {
@@ -37,6 +38,23 @@ var connectCmd = &cobra.Command{
 		fmt.Printf("Connecting to %s via backend %s...\n", dsn, server)
 
 		c := client.NewClient(server, time.Duration(timeout)*time.Millisecond)
+		if disconnectCurrent {
+			if oldEntry, err := config.ResolveActiveSession(""); err == nil {
+				oldClient := client.NewClient(oldEntry.ServerURL, time.Duration(timeout)*time.Millisecond)
+				_ = oldClient.Disconnect(oldEntry.SessionId)
+
+				reg, err := config.LoadRegistry()
+				if err == nil {
+					reg.RemoveSession(oldEntry.Name)
+					_ = config.SaveRegistry(reg)
+				}
+				cfg, err := config.LoadConfig()
+				if err == nil && cfg != nil && cfg.CurrentName == oldEntry.Name {
+					cfg.CurrentName = ""
+					_ = config.SaveConfig(cfg)
+				}
+			}
+		}
 		if dbType != "oracle" && dbType != "postgres" {
 			drivers, err := c.MetaDrivers()
 			if err != nil {
@@ -109,4 +127,5 @@ func startRepl(cmd *cobra.Command) error {
 func init() {
 	rootCmd.AddCommand(connectCmd)
 	connectCmd.Flags().String("name", "", "Name this session (tmux-like)")
+	connectCmd.Flags().Bool("disconnect-current", false, "Disconnect the currently active session before connecting")
 }

@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
@@ -153,6 +154,42 @@ public class CollectorRegistry {
         } catch (Exception e) {
             log.error("Failed to get config for dbType: {}", dbType, e);
             return null;
+        }
+    }
+
+    /**
+     * Returns all collector configs that match the current database version.
+     *
+     * <p>This is used for collector resolution by {@code collector_id} or {@code collector_ref}.
+     * The caller can detect ambiguity when multiple packs contain the same collector_id.
+     *
+     * @param conn database connection
+     * @param dbType database type
+     * @return list of matching configs (possibly empty)
+     */
+    public List<CollectorConfig> getMatchingConfigs(Connection conn, String dbType) {
+        if (conn == null || dbType == null || dbType.isBlank()) {
+            return List.of();
+        }
+
+        try {
+            String dbVersion = conn.getMetaData().getDatabaseProductVersion();
+            String numericVersion = extractNumericVersion(dbVersion);
+            Map<String, List<CollectorConfig>> snapshot = configsByDbType;
+            List<CollectorConfig> configs = snapshot.get(dbType);
+            if (configs == null || configs.isEmpty()) {
+                return List.of();
+            }
+
+            return configs.stream()
+                    .filter(Objects::nonNull)
+                    .filter(config -> config.getSupportedVersions() != null)
+                    .filter(config -> isVersionInRange(numericVersion, config.getSupportedVersions()))
+                    .sorted(Comparator.comparing(c -> c.getSupportedVersions().getMax()))
+                    .toList();
+        } catch (Exception e) {
+            log.error("Failed to get matching configs for dbType: {}", dbType, e);
+            return List.of();
         }
     }
 

@@ -54,6 +54,9 @@ Thumbs.db
 # Design docs
 /design/
 
+# Agent Skills
+.github/skills/
+
 # JDBC drivers
 *.jar
 

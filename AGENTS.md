@@ -170,6 +170,18 @@ postgres://user:password@host:5432/database
 - `POST /v1/disconnect?session_id=...` - Terminate session
 - `POST /v1/execute_sql` - Execute SQL
 
+### Collectors (YAML-defined tools)
+- `GET /v1/collectors/list?session_id=...` - List available collectors for this session context
+- `GET /v1/collectors/queries?session_id=...&collector_id=...` - List runnable query definitions under `queries:`
+- `POST /v1/collectors/run` - Execute a collector (all layers/queries) or a specific query with params
+
+### Samplers (session-scoped)
+- `PUT /v1/sessions/{session_id}/samplers/{sampler_id}` - Create/update a sampler and ensure it is running
+- `DELETE /v1/sessions/{session_id}/samplers/{sampler_id}` - Stop/remove a sampler
+- `GET /v1/sessions/{session_id}/samplers` - List samplers for a session
+- `GET /v1/sessions/{session_id}/samplers/{sampler_id}` - Get sampler status
+- `GET /v1/sessions/{session_id}/samplers/{sampler_id}/snapshot` - Get latest sampler snapshot
+
 ### Metadata
 - `GET /v1/meta/describe` - Describe table/view
 - `GET /v1/meta/list` - List tables/views
