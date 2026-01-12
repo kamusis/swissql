@@ -7,6 +7,23 @@ collectors:
   swiss:
     description: Swiss sampler query set
     queries:
+      sqltext:
+        description: Get SQL text by SQL ID
+        sql: |
+          SELECT sql_id, sql_text, sql_fulltext 
+          FROM v$sql 
+          WHERE sql_id = :sql_id
+        singleRow: true
+        parameters:
+          - sql_id
+      sqlplan:
+        description: Get execution plan by SQL ID
+        sql: |
+          SELECT plan_table_output AS plan_line
+          FROM TABLE(DBMS_XPLAN.DISPLAY_CURSOR(:sql_id, 0, 'TYPICAL'))
+        singleRow: false
+        parameters:
+          - sql_id
       locks_exclusive:
         description: Sessions holding exclusive locks
         sql: |

@@ -126,20 +126,26 @@ func runRepl(cmd *cobra.Command, args []string) error {
 
 		lower := strings.ToLower(input)
 
-		if handleReplHelp(line, cfg.History.Mode, input) {
-			continue
+		dispatchCtx := &replDispatchContext{
+			Cmd:            cmd,
+			Line:           line,
+			HistoryMode:    cfg.History.Mode,
+			Input:          input,
+			Lower:          lower,
+			Client:         c,
+			SessionId:      &sessionId,
+			Entry:          &entry,
+			Name:           &name,
+			Cfg:            cfg,
+			CurrentDbType:  &currentDbType,
+			MultiLineSql:   &multiLineSql,
+			InvalidateFunc: invalidateCache,
+			CompleterFunc: func(c *client.Client, sessionId string) liner.Completer {
+				return makeCompleter(c, sessionId)
+			},
 		}
 
-		handled, shouldBreak := handleReplDetachExit(
-			cmd,
-			line,
-			cfg.History.Mode,
-			input,
-			c,
-			sessionId,
-			name,
-			cfg,
-		)
+		handled, shouldBreak := dispatchReplLine(dispatchCtx)
 		if handled {
 			if shouldBreak {
 				break
@@ -147,72 +153,11 @@ func runRepl(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		if handleReplSetDisplay(line, cfg.History.Mode, input, cfg) {
-			continue
-		}
-
-		if handleReplSetOutput(line, cfg.History.Mode, input, cfg) {
-			continue
-		}
-
-		if handleReplSetDbType(cmd, line, cfg.History.Mode, input, c, sessionId, &currentDbType) {
-			continue
-		}
-
-		if handleReplDriverCommands(cmd, line, cfg.History.Mode, input, c) {
-			continue
-		}
-
-		connected, newEntry, newName := handleReplConnectCommand(cmd, line, cfg.History.Mode, input, c)
-		if connected {
-			sessionId = newEntry.SessionId
-			entry = newEntry
-			currentDbType = entry.DbType
-			name = newName
-			line.SetCompleter(makeCompleter(c, sessionId))
-			invalidateCache()
-			fmt.Printf("Connected successfully! Session ID: %s\n", sessionId)
-			continue
-		}
-
-		// Phase 3 P0 meta-commands (single-line)
-		if isMetaCommandStart(input) {
-			cmdName, args := parseMetaCommand(input)
-
-			// Check if it's a watch command (can run without session)
-			if handleReplWatch(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId, cfg) {
-				continue
+		handled, shouldBreak = dispatchReplMeta(dispatchCtx)
+		if handled {
+			if shouldBreak {
+				break
 			}
-
-			if strings.TrimSpace(sessionId) == "" {
-				fmt.Println("Error: no active DB session. Use 'connect <dsn>' first.")
-				continue
-			}
-
-			if handleReplMetaCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId, cfg) {
-				continue
-			}
-			if handleReplSamplerCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId, cfg) {
-				continue
-			}
-			if handleReplTopCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId, cfg) {
-				continue
-			}
-			if handleReplIOCommands(cmd, line, cfg.History.Mode, input, cmdName, args, c, sessionId) {
-				continue
-			}
-		}
-
-		if strings.TrimSpace(sessionId) != "" {
-			if handleReplContextCommands(line, cfg.History.Mode, input, lower, c, sessionId) {
-				continue
-			}
-		} else if strings.HasPrefix(lower, "/context") {
-			fmt.Println("Error: no active DB session. Use 'connect <dsn>' first.")
-			continue
-		}
-
-		if handleReplAICommand(cmd, line, cfg.History.Mode, input, c, sessionId, currentDbType, &multiLineSql) {
 			continue
 		}
 

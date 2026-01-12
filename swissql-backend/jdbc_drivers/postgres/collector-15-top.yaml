@@ -1,0 +1,104 @@
+dbType: postgres
+supportedVersions:
+  min: "15.0.0.0.0"
+  max: "18.99.99.99.99"
+description: PostgreSQL 15 TOP performance metrics collector (4-layer model)
+collectors:
+  top:
+    description: Top performance metrics using 4-layer model (Context, Resource, Wait, Load Attribution)
+    layers:
+      context:
+        description: L0 Context - Database version, topology, role, uptime
+        order: 0
+        render_hint:
+          display_type: key_value
+          title: Context
+        sql: |
+          SELECT 
+            version() AS "dbVersion",
+            EXTRACT(EPOCH FROM (now() - pg_postmaster_start_time())) AS "uptimeSec",
+            inet_server_addr()::text AS "instance",
+            CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END AS "role",
+            'UP' AS "status",
+            current_setting('server_version') AS "dbType"
+        singleRow: true
+      cpu:
+        description: L1 Resource - CPU metrics
+        order: 1
+        render_hint:
+          display_type: summary_line
+          title: CPU
+        sql: |
+          SELECT 
+            NULL::numeric AS "dbCpuSec",
+            NULL::numeric AS "cpuWaitSec"
+        singleRow: true
+      sessions:
+        description: L1/L3 - Session metrics
+        order: 3
+        render_hint:
+          display_type: summary_line
+          title: Sessions
+        sql: |
+          SELECT COUNT(*) AS total, 
+                 SUM(CASE WHEN state = 'active' THEN 1 ELSE 0 END) AS active, 
+                 SUM(CASE WHEN state = 'active' AND wait_event_type IS NULL THEN 1 ELSE 0 END) AS running, 
+                 SUM(CASE WHEN state = 'active' AND wait_event_type IS NOT NULL THEN 1 ELSE 0 END) AS waiting 
+          FROM pg_stat_activity 
+          WHERE pid <> pg_backend_pid()
+        singleRow: true
+      waits:
+        description: L2 Wait - Top wait events
+        order: 4
+        render_hint:
+          display_type: table
+          title: Top Wait Events
+        sql: |
+          SELECT COALESCE(wait_event_type, 'None') AS "class", 
+                 wait_event AS "name", 
+                 COUNT(*) AS "count", 
+                 NULL::numeric AS "timeMs", 
+                 NULL::numeric AS "avgMs" 
+          FROM pg_stat_activity 
+          WHERE wait_event IS NOT NULL 
+          GROUP BY wait_event_type, wait_event 
+          ORDER BY COUNT(*) DESC 
+          LIMIT 10
+        singleRow: false
+      topSessions:
+        description: L3 Load Attribution - Top active sessions by duration
+        order: 5
+        render_hint:
+          display_type: table
+          title: Top Sessions
+        sql: |
+          SELECT 
+            pid AS "sid",
+            NULL::bigint AS "serial#",
+            usename AS "username",
+            COALESCE(application_name, '') AS "program",
+            state AS "status",
+            wait_event_type AS "wait_class",
+            COALESCE(wait_event, 'ON CPU') AS "event",
+            EXTRACT(EPOCH FROM (now() - query_start))::bigint AS "active_duration_sec",
+            query_id::text AS "sql_id"
+          FROM pg_stat_activity s
+          WHERE s.state = 'active'
+          ORDER BY "active_duration_sec" DESC
+          LIMIT 10
+        singleRow: false
+      io:
+        description: L1 Resource - I/O metrics
+        order: 2
+        render_hint:
+          display_type: summary_line
+          title: I/O
+        sql: |
+          SELECT 
+            NULL::numeric AS "readIops", 
+            NULL::numeric AS "writeIops", 
+            (SELECT SUM(blks_read) * current_setting('block_size')::bigint FROM pg_stat_database) AS "readBytes", 
+            (SELECT (buffers_checkpoint + buffers_clean + buffers_backend) * current_setting('block_size')::bigint FROM pg_stat_bgwriter) AS "writeBytes", 
+            NULL::numeric AS "readLatencyMs", 
+            NULL::numeric AS "writeLatencyMs" 
+        singleRow: true

@@ -1,15 +1,29 @@
 package com.swissql.controller;
 
 import com.swissql.api.*;
+import com.swissql.api.AiGenerateRequest;
+import com.swissql.api.AiGenerateResponse;
+import com.swissql.api.ConnectRequest;
+import com.swissql.api.ConnectResponse;
+import com.swissql.api.CollectorCandidate;
+import com.swissql.api.CollectorsListResponse;
+import com.swissql.api.CollectorsRunRequest;
+import com.swissql.api.ErrorResponse;
+import com.swissql.model.CollectorResult;
+import com.swissql.model.SamplerDefinition;
+import com.swissql.api.ExecuteRequest;
+import com.swissql.api.ExecuteResponse;
 import com.swissql.driver.DriverRegistry;
 import com.swissql.driver.JdbcDriverAutoLoader;
-import com.swissql.model.TopSnapshot;
 import com.swissql.service.AiContextService;
 import com.swissql.service.AiSqlGenerateService;
 import com.swissql.service.DatabaseService;
 import com.swissql.service.SessionManager;
-import com.swissql.sampler.SamplerConfig;
 import com.swissql.sampler.SamplerManager;
+import com.swissql.sampler.CollectorAmbiguousException;
+import com.swissql.sampler.CollectorNotFoundException;
+import com.swissql.sampler.CollectorRunner;
+import com.swissql.sampler.QueryNotFoundException;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +45,9 @@ import java.sql.ResultSet;
 @RequestMapping("/v1")
 public class SwissQLController {
 
+    // TODO: Unify backend JSON DTO naming strategy to snake_case across all API payloads.
+    // See: design/api-contract-snake-case-audit.md
+
     private static final Logger log = LoggerFactory.getLogger(SwissQLController.class);
 
     private final SessionManager sessionManager;
@@ -40,6 +57,7 @@ public class SwissQLController {
     private final DriverRegistry driverRegistry;
     private final JdbcDriverAutoLoader jdbcDriverAutoLoader;
     private final SamplerManager samplerManager;
+    private final CollectorRunner collectorRunner;
 
     public SwissQLController(
             SessionManager sessionManager,
@@ -48,7 +66,8 @@ public class SwissQLController {
             AiContextService aiContextService,
             DriverRegistry driverRegistry,
             JdbcDriverAutoLoader jdbcDriverAutoLoader,
-            SamplerManager samplerManager
+            SamplerManager samplerManager,
+            CollectorRunner collectorRunner
     ) {
         this.sessionManager = sessionManager;
         this.databaseService = databaseService;
@@ -57,6 +76,7 @@ public class SwissQLController {
         this.driverRegistry = driverRegistry;
         this.jdbcDriverAutoLoader = jdbcDriverAutoLoader;
         this.samplerManager = samplerManager;
+        this.collectorRunner = collectorRunner;
     }
 
     /**
@@ -82,7 +102,7 @@ public class SwissQLController {
         } catch (Exception e) {
             if (sessionInfo != null && sessionInfo.getSessionId() != null) {
                 try {
-                    samplerManager.stopSampler(sessionInfo.getSessionId());
+                    samplerManager.stopAllSamplers(sessionInfo.getSessionId());
                 } catch (Exception ignored) {
                 }
                 try {
@@ -111,10 +131,12 @@ public class SwissQLController {
      */
     @PostMapping("/disconnect")
     public ResponseEntity<Void> disconnect(@RequestParam("session_id") String sessionId) {
-        samplerManager.stopSampler(sessionId);
+        log.info("Disconnect requested: session_id={}, trace_id={}", sessionId, MDC.get("trace_id"));
+        samplerManager.stopAllSamplers(sessionId);
         sessionManager.terminateSession(sessionId);
         databaseService.closeSession(sessionId);
         aiContextService.clear(sessionId);
+        log.info("Disconnect completed: session_id={}, trace_id={}", sessionId, MDC.get("trace_id"));
         return ResponseEntity.ok().build();
     }
 
@@ -479,53 +501,194 @@ public class SwissQLController {
         return ResponseEntity.ok(Map.of("status", "UP"));
     }
 
-    /**
-     * Get top performance snapshot.
-     *
-     * GET /v1/top/snapshot
-     */
-    @GetMapping("/top/snapshot")
-    public ResponseEntity<?> getTopSnapshot(@RequestParam("session_id") String sessionId) {
-        var sessionInfoOpt = sessionManager.getSession(sessionId);
-        if (sessionInfoOpt.isEmpty()) {
-            return ResponseEntity.status(401).body(ErrorResponse.builder()
-                    .code("SESSION_EXPIRED")
-                    .message("Session missing or expired")
-                    .traceId(MDC.get("trace_id"))
-                    .build());
-        }
+     @GetMapping("/collectors/list")
+     public ResponseEntity<?> listCollectors(@RequestParam("session_id") String sessionId) {
+         var sessionInfoOpt = sessionManager.getSession(sessionId);
+         if (sessionInfoOpt.isEmpty()) {
+             return ResponseEntity.status(401).body(ErrorResponse.builder()
+                     .code("SESSION_EXPIRED")
+                     .message("Session missing or expired")
+                     .traceId(MDC.get("trace_id"))
+                     .build());
+         }
 
-        String stoppedReason = samplerManager.getStoppedReason(sessionId);
-        if (stoppedReason != null && !stoppedReason.isBlank()) {
-            return ResponseEntity.status(409).body(ErrorResponse.builder()
-                    .code("SAMPLER_STOPPED")
-                    .message("Sampler stopped: " + stoppedReason)
-                    .traceId(MDC.get("trace_id"))
-                    .build());
-        }
+         try {
+             var sessionInfo = sessionInfoOpt.get();
+             String dbType = sessionInfo.getDbType();
 
-        TopSnapshot snapshot = samplerManager.getSnapshot(sessionId);
-        if (snapshot == null) {
-            return ResponseEntity.status(404).body(ErrorResponse.builder()
-                    .code("SAMPLER_NOT_FOUND")
-                    .message("Sampler not started for this session")
-                    .traceId(MDC.get("trace_id"))
-                    .build());
-        }
+             try (Connection connection = databaseService.getConnection(sessionInfo)) {
+                 var configs = samplerManager.getCollectorRegistry().getMatchingConfigs(connection, dbType);
+                 var out = configs.stream()
+                         .flatMap(cfg -> {
+                             if (cfg.getCollectors() == null) {
+                                 return java.util.stream.Stream.<CollectorCandidate>empty();
+                             }
+                             return cfg.getCollectors().entrySet().stream().map(e -> CollectorCandidate.builder()
+                                     .collectorId(e.getKey())
+                                     .collectorRef(cfg.getSourceFile() + ":" + e.getKey())
+                                     .sourceFile(cfg.getSourceFile())
+                                     .description(e.getValue() != null ? e.getValue().getDescription() : null)
+                                     .build());
+                         })
+                         .sorted(java.util.Comparator.comparing(CollectorCandidate::getCollectorRef))
+                         .toList();
 
-        // log.debug("Returning snapshot with topSessions size: {}", snapshot.getTopSessions() != null ? snapshot.getTopSessions().size() : 0);
-        return ResponseEntity.ok(snapshot);
-    }
+                 return ResponseEntity.ok(CollectorsListResponse.builder().collectors(out).build());
+             }
+         } catch (Exception e) {
+             return ResponseEntity.status(500).body(ErrorResponse.builder()
+                     .code("EXECUTION_ERROR")
+                     .message(e.getMessage())
+                     .traceId(MDC.get("trace_id"))
+                     .build());
+         }
+     }
 
-    /**
-     * Get SQL text by ID.
-     *
-     * GET /v1/meta/sqltext
-     */
-    @GetMapping("/meta/sqltext")
-    public ResponseEntity<?> getSqlText(
-            @RequestParam("session_id") String sessionId,
-            @RequestParam("sql_id") String sqlId
+     /**
+      * List runnable queries (only those defined under the `queries:` node in YAML packs).
+      *
+      * GET /v1/collectors/queries
+      */
+     @GetMapping("/collectors/queries")
+     public ResponseEntity<?> listCollectorQueries(
+             @RequestParam("session_id") String sessionId,
+             @RequestParam(value = "collector_id", required = false) String collectorId
+     ) {
+         var sessionInfoOpt = sessionManager.getSession(sessionId);
+         if (sessionInfoOpt.isEmpty()) {
+             return ResponseEntity.status(401).body(ErrorResponse.builder()
+                     .code("SESSION_EXPIRED")
+                     .message("Session missing or expired")
+                     .traceId(MDC.get("trace_id"))
+                     .build());
+         }
+
+         try {
+             var sessionInfo = sessionInfoOpt.get();
+             String dbType = sessionInfo.getDbType();
+
+             try (Connection connection = databaseService.getConnection(sessionInfo)) {
+                 var configs = samplerManager.getCollectorRegistry().getMatchingConfigs(connection, dbType);
+                 List<CollectorQueryCandidate> out = new ArrayList<>();
+
+                 for (var cfg : configs) {
+                     if (cfg == null || cfg.getCollectors() == null) {
+                         continue;
+                     }
+                     for (var entry : cfg.getCollectors().entrySet()) {
+                         String cid = entry.getKey();
+                         if (collectorId != null && !collectorId.isBlank() && !collectorId.equals(cid)) {
+                             continue;
+                         }
+
+                         var def = entry.getValue();
+                         if (def == null || def.getQueries() == null) {
+                             continue;
+                         }
+
+                         for (var qEntry : def.getQueries().entrySet()) {
+                             String qid = qEntry.getKey();
+                             var qCfg = qEntry.getValue();
+                             out.add(CollectorQueryCandidate.builder()
+                                     .collectorId(cid)
+                                     .collectorRef(cfg.getSourceFile() + ":" + cid)
+                                     .sourceFile(cfg.getSourceFile())
+                                     .queryId(qid)
+                                     .description(qCfg != null ? qCfg.getDescription() : null)
+                                     .build());
+                         }
+                     }
+                 }
+
+                 out = out.stream()
+                         .sorted(java.util.Comparator
+                                 .comparing(CollectorQueryCandidate::getCollectorRef)
+                                 .thenComparing(CollectorQueryCandidate::getQueryId))
+                         .toList();
+
+                 return ResponseEntity.ok(CollectorsQueriesListResponse.builder().queries(out).build());
+             }
+         } catch (Exception e) {
+             return ResponseEntity.status(500).body(ErrorResponse.builder()
+                     .code("EXECUTION_ERROR")
+                     .message(e.getMessage())
+                     .traceId(MDC.get("trace_id"))
+                     .build());
+         }
+     }
+
+     @PostMapping("/collectors/run")
+     public ResponseEntity<?> runCollector(@Valid @RequestBody CollectorsRunRequest request) {
+         var sessionInfoOpt = sessionManager.getSession(request.getSessionId());
+         if (sessionInfoOpt.isEmpty()) {
+             return ResponseEntity.status(401).body(ErrorResponse.builder()
+                     .code("SESSION_EXPIRED")
+                     .message("Session missing or expired")
+                     .traceId(MDC.get("trace_id"))
+                     .build());
+         }
+
+         try {
+             var sessionInfo = sessionInfoOpt.get();
+             String dbType = sessionInfo.getDbType();
+
+             try (Connection connection = databaseService.getConnection(sessionInfo)) {
+                 if (request.getQueryId() != null && !request.getQueryId().isBlank()) {
+                     return ResponseEntity.ok(collectorRunner.runQuery(
+                             connection,
+                             dbType,
+                             request.getCollectorId(),
+                             request.getCollectorRef(),
+                             request.getQueryId(),
+                             request.getParams()
+                     ));
+                 }
+
+                 return ResponseEntity.ok(collectorRunner.runCollector(
+                         connection,
+                         dbType,
+                         request.getCollectorId(),
+                         request.getCollectorRef()
+                 ));
+             }
+         } catch (CollectorNotFoundException e) {
+             return ResponseEntity.status(404).body(ErrorResponse.builder()
+                     .code("COLLECTOR_NOT_FOUND")
+                     .message(e.getMessage())
+                     .traceId(MDC.get("trace_id"))
+                     .build());
+         } catch (CollectorAmbiguousException e) {
+             return ResponseEntity.status(409).body(ErrorResponse.builder()
+                     .code("COLLECTOR_AMBIGUOUS")
+                     .message(e.getMessage())
+                     .traceId(MDC.get("trace_id"))
+                     .build());
+         } catch (QueryNotFoundException e) {
+             return ResponseEntity.status(404).body(ErrorResponse.builder()
+                     .code("QUERY_NOT_FOUND")
+                     .message(e.getMessage())
+                     .traceId(MDC.get("trace_id"))
+                     .build());
+         } catch (IllegalArgumentException e) {
+             return ResponseEntity.status(400).body(ErrorResponse.builder()
+                     .code("COLLECTOR_YAML_INVALID")
+                     .message(e.getMessage())
+                     .traceId(MDC.get("trace_id"))
+                     .build());
+         } catch (Exception e) {
+             return ResponseEntity.status(500).body(ErrorResponse.builder()
+                     .code("EXECUTION_ERROR")
+                     .message(e.getMessage())
+                     .traceId(MDC.get("trace_id"))
+                     .build());
+         }
+     }
+
+    @PutMapping("/sessions/{session_id}/samplers/{sampler_id}")
+    public ResponseEntity<?> upsertSampler(
+            @PathVariable("session_id") String sessionId,
+            @PathVariable("sampler_id") String samplerId,
+            @Valid @RequestBody SamplerDefinition definition
     ) {
         var sessionInfoOpt = sessionManager.getSession(sessionId);
         if (sessionInfoOpt.isEmpty()) {
@@ -537,130 +700,42 @@ public class SwissQLController {
         }
 
         try {
-            var sessionInfo = sessionInfoOpt.get();
-            var collectorConfig = samplerManager.getCollectorRegistry().getConfig(
-                    databaseService.getConnection(sessionInfo), sessionInfo.getDbType());
-
-            if (collectorConfig == null || collectorConfig.getCollectors() == null) {
-                return ResponseEntity.status(404).body(ErrorResponse.builder()
-                        .code("COLLECTOR_NOT_FOUND")
-                        .message("Collector configuration not found")
+            if (definition == null) {
+                return ResponseEntity.status(400).body(ErrorResponse.builder()
+                        .code("SAMPLER_INVALID_CONFIG")
+                        .message("Sampler definition is required")
                         .traceId(MDC.get("trace_id"))
                         .build());
             }
 
-            var sqltextCollector = collectorConfig.getCollectors().get("sqltext");
-            if (sqltextCollector == null || sqltextCollector.getQueries() == null) {
-                return ResponseEntity.status(404).body(ErrorResponse.builder()
-                        .code("SQLTEXT_COLLECTOR_NOT_FOUND")
-                        .message("SQL text collector not found")
-                        .traceId(MDC.get("trace_id"))
-                        .build());
-            }
-
-            var query = sqltextCollector.getQueries().get("by_id");
-            if (query == null) {
-                return ResponseEntity.status(404).body(ErrorResponse.builder()
-                        .code("SQLTEXT_QUERY_NOT_FOUND")
-                        .message("SQL text query not found")
-                        .traceId(MDC.get("trace_id"))
-                        .build());
-            }
-
-            var sql = query.getSql();
-            if (sql.contains(":sql_id")) {
-                sql = sql.replace(":sql_id", "?");
-            }
-
-            // TODO(P0): Move :param -> ? replacement and parameter binding to GenericCollector/SqlTemplateBinder
-            // utility instead of manual string replacement. This avoids code duplication and potential SQL
-            // injection. It must support multiple parameters/placeholders (e.g., :sql_id, :inst_id, ...)
-            // and preserve parameter ordering when converting to a prepared statement.
-
-            try (Connection conn = databaseService.getConnection(sessionInfo);
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                stmt.setString(1, sqlId);
-                try (ResultSet rs = stmt.executeQuery()) {
-
-                    if (rs.next()) {
-                        String id = rs.getString("sql_id");
-                        String fullText = rs.getString("sql_fulltext");
-                        String shortText = rs.getString("sql_text");
-                        String text = fullText != null ? fullText : shortText;
-                        boolean truncated = fullText == null;
-
-                        return ResponseEntity.ok(SqlTextResponse.builder()
-                                .sqlId(sqlId)
-                                .text(text)
-                                .truncated(truncated)
-                                .build());
-                    } else {
-                        return ResponseEntity.status(404).body(ErrorResponse.builder()
-                                .code("SQL_NOT_FOUND")
-                                .message("SQL not found: " + sqlId)
-                                .traceId(MDC.get("trace_id"))
-                                .build());
-                    }
-                }
-            }
+            definition.setSamplerId(samplerId);
+            samplerManager.upsertSampler(sessionId, samplerId, definition);
+            var status = samplerManager.getSamplerStatus(sessionId, samplerId);
+            return ResponseEntity.ok(Map.of(
+                    "sampler_id", samplerId,
+                    "status", status.getStatus(),
+                    "reason", status.getReason() == null ? "" : status.getReason()
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(400).body(ErrorResponse.builder()
+                    .code("SAMPLER_INVALID_CONFIG")
+                    .message(e.getMessage())
+                    .traceId(MDC.get("trace_id"))
+                    .build());
         } catch (Exception e) {
             return ResponseEntity.status(500).body(ErrorResponse.builder()
-                    .code("EXECUTION_ERROR")
+                    .code("SAMPLER_UPDATE_FAILED")
                     .message(e.getMessage())
                     .traceId(MDC.get("trace_id"))
                     .build());
         }
     }
 
-    /**
-     * Update top sampler configuration.
-     *
-     * POST /v1/top/config
-     */
-    @PostMapping("/top/config")
-    public ResponseEntity<?> updateTopConfig(@Valid @RequestBody TopConfigRequest request) {
-        var sessionInfoOpt = sessionManager.getSession(request.getSessionId());
-        if (sessionInfoOpt.isEmpty()) {
-            return ResponseEntity.status(401).body(ErrorResponse.builder()
-                    .code("SESSION_EXPIRED")
-                    .message("Session missing or expired")
-                    .traceId(MDC.get("trace_id"))
-                    .build());
-        }
-
-        try {
-            SamplerConfig config = SamplerConfig.builder()
-                    .intervalSec(request.getIntervalSec())
-                    .enableTopSql(request.getEnableTopSql())
-                    .enableTopSessions(request.getEnableTopSessions())
-                    .maxItems(request.getMaxItems())
-                    .build();
-
-            samplerManager.updateConfig(request.getSessionId(), config);
-
-            return ResponseEntity.ok(TopConfigResponse.builder()
-                    .message("Configuration updated successfully")
-                    .intervalSec(config.getIntervalSec())
-                    .enableTopSql(config.getEnableTopSql())
-                    .enableTopSessions(config.getEnableTopSessions())
-                    .maxItems(config.getMaxItems())
-                    .build());
-        } catch (Exception e) {
-            return ResponseEntity.status(500).body(ErrorResponse.builder()
-                    .code("CONFIG_UPDATE_FAILED")
-                    .message(e.getMessage())
-                    .traceId(MDC.get("trace_id"))
-                    .build());
-        }
-    }
-
-    /**
-     * Start top sampler for an existing session.
-     *
-     * POST /v1/top/start
-     */
-    @PostMapping("/top/start")
-    public ResponseEntity<?> startTopSampler(@RequestParam("session_id") String sessionId) {
+    @DeleteMapping("/sessions/{session_id}/samplers/{sampler_id}")
+    public ResponseEntity<?> deleteSampler(
+            @PathVariable("session_id") String sessionId,
+            @PathVariable("sampler_id") String samplerId
+    ) {
         var sessionInfoOpt = sessionManager.getSession(sessionId);
         if (sessionInfoOpt.isEmpty()) {
             return ResponseEntity.status(401).body(ErrorResponse.builder()
@@ -670,22 +745,17 @@ public class SwissQLController {
                     .build());
         }
 
-        samplerManager.startSampler(sessionId);
-        var status = samplerManager.getTopSamplerStatus(sessionId);
-        return ResponseEntity.ok(TopSamplerControlResponse.builder()
-                .message("Start requested")
-                .status(status.getStatus())
-                .reason(status.getReason())
-                .build());
+        samplerManager.stopSampler(sessionId, samplerId);
+        var status = samplerManager.getSamplerStatus(sessionId, samplerId);
+        return ResponseEntity.ok(Map.of(
+                "sampler_id", samplerId,
+                "status", status.getStatus(),
+                "reason", status.getReason() == null ? "" : status.getReason()
+        ));
     }
 
-    /**
-     * Stop top sampler for an existing session.
-     *
-     * POST /v1/top/stop
-     */
-    @PostMapping("/top/stop")
-    public ResponseEntity<?> stopTopSampler(@RequestParam("session_id") String sessionId) {
+    @GetMapping("/sessions/{session_id}/samplers")
+    public ResponseEntity<?> listSamplers(@PathVariable("session_id") String sessionId) {
         var sessionInfoOpt = sessionManager.getSession(sessionId);
         if (sessionInfoOpt.isEmpty()) {
             return ResponseEntity.status(401).body(ErrorResponse.builder()
@@ -695,22 +765,16 @@ public class SwissQLController {
                     .build());
         }
 
-        samplerManager.stopSampler(sessionId);
-        var status = samplerManager.getTopSamplerStatus(sessionId);
-        return ResponseEntity.ok(TopSamplerControlResponse.builder()
-                .message("Stop requested")
-                .status(status.getStatus())
-                .reason(status.getReason())
-                .build());
+        return ResponseEntity.ok(Map.of(
+                "samplers", samplerManager.listSamplerIds(sessionId)
+        ));
     }
 
-    /**
-     * Restart top sampler for an existing session.
-     *
-     * POST /v1/top/restart
-     */
-    @PostMapping("/top/restart")
-    public ResponseEntity<?> restartTopSampler(@RequestParam("session_id") String sessionId) {
+    @GetMapping("/sessions/{session_id}/samplers/{sampler_id}")
+    public ResponseEntity<?> getSamplerStatus(
+            @PathVariable("session_id") String sessionId,
+            @PathVariable("sampler_id") String samplerId
+    ) {
         var sessionInfoOpt = sessionManager.getSession(sessionId);
         if (sessionInfoOpt.isEmpty()) {
             return ResponseEntity.status(401).body(ErrorResponse.builder()
@@ -720,22 +784,19 @@ public class SwissQLController {
                     .build());
         }
 
-        samplerManager.restartSampler(sessionId);
-        var status = samplerManager.getTopSamplerStatus(sessionId);
-        return ResponseEntity.ok(TopSamplerControlResponse.builder()
-                .message("Restart requested")
-                .status(status.getStatus())
-                .reason(status.getReason())
-                .build());
+        var status = samplerManager.getSamplerStatus(sessionId, samplerId);
+        return ResponseEntity.ok(Map.of(
+                "sampler_id", samplerId,
+                "status", status.getStatus(),
+                "reason", status.getReason() == null ? "" : status.getReason()
+        ));
     }
 
-    /**
-     * Get current top sampler status for an existing session.
-     *
-     * GET /v1/top/status
-     */
-    @GetMapping("/top/status")
-    public ResponseEntity<?> getTopSamplerStatus(@RequestParam("session_id") String sessionId) {
+    @GetMapping("/sessions/{session_id}/samplers/{sampler_id}/snapshot")
+    public ResponseEntity<?> getSamplerSnapshot(
+            @PathVariable("session_id") String sessionId,
+            @PathVariable("sampler_id") String samplerId
+    ) {
         var sessionInfoOpt = sessionManager.getSession(sessionId);
         if (sessionInfoOpt.isEmpty()) {
             return ResponseEntity.status(401).body(ErrorResponse.builder()
@@ -745,10 +806,35 @@ public class SwissQLController {
                     .build());
         }
 
-        var status = samplerManager.getTopSamplerStatus(sessionId);
-        return ResponseEntity.ok(TopSamplerStatusResponse.builder()
-                .status(status.getStatus())
-                .reason(status.getReason())
-                .build());
+        String stoppedReason = samplerManager.getStoppedReason(sessionId, samplerId);
+        if (stoppedReason != null && !stoppedReason.isBlank()) {
+            return ResponseEntity.status(409).body(ErrorResponse.builder()
+                    .code("SAMPLER_STOPPED")
+                    .message("Sampler stopped: " + stoppedReason)
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        CollectorResult snapshot = samplerManager.getSnapshot(sessionId, samplerId);
+        if (snapshot == null) {
+            var status = samplerManager.getSamplerStatus(sessionId, samplerId);
+            if (status != null && "RUNNING".equalsIgnoreCase(status.getStatus())) {
+                return ResponseEntity.status(409).body(ErrorResponse.builder()
+                        .code("SAMPLER_NO_SNAPSHOT_YET")
+                        .message("Sampler is running but no snapshot is available yet")
+                        .traceId(MDC.get("trace_id"))
+                        .build());
+            }
+
+            return ResponseEntity.status(404).body(ErrorResponse.builder()
+                    .code("SAMPLER_NOT_FOUND")
+                    .message("Sampler not started for this session")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
+        return ResponseEntity.ok(snapshot);
     }
+
+    
 }

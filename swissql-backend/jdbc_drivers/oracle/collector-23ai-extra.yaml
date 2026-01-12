@@ -4,18 +4,6 @@ supportedVersions:
   max: "23.99.99.99.99"
 description: Oracle collectors (non-top)
 collectors:
-  sqltext:
-    description: SQL text retrieval for explain plans
-    queries:
-      by_id:
-        description: Get SQL text by SQL ID
-        sql: |
-          SELECT sql_id, sql_text, sql_fulltext 
-          FROM v$sql 
-          WHERE sql_id = :sql_id
-        singleRow: true
-        parameters:
-          - sql_id
   perf:
     description: Performance diagnostics metrics (future use)
     queries:

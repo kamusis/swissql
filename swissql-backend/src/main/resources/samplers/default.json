@@ -13,8 +13,7 @@
         "on_overlap": "skip"
       },
       "target": {
-        "collector_id": "top",
-        "collector_ref": "swiss-23ai:top"
+        "collector_id": "top"
       }
     },
     {

@@ -37,7 +37,7 @@ collectors:
         singleRow: true
       sessions:
         description: L1/L3 - Session metrics
-        order: 2
+        order: 3
         render_hint:
           display_type: summary_line
           title: Sessions
@@ -51,7 +51,7 @@ collectors:
         singleRow: true
       waits:
         description: L2 Wait - Top wait events
-        order: 3
+        order: 4
         render_hint:
           display_type: table
           title: Top Wait Events
@@ -68,7 +68,7 @@ collectors:
         singleRow: false
       top_sessions:
         description: L3 Load Attribution - Top active sessions by duration
-        order: 4
+        order: 5
         render_hint:
           display_type: table
           title: Top Sessions
@@ -91,7 +91,7 @@ collectors:
         singleRow: false
       io:
         description: L1 Resource - I/O metrics
-        order: 5
+        order: 2
         render_hint:
           display_type: summary_line
           title: I/O
