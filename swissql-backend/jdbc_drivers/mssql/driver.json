@@ -1,0 +1,6 @@
+{
+  "dbType": "mssql",
+  "driverClass": "com.sybase.jdbc4.jdbc.SybDriver",
+  "jdbcUrlTemplate": "jdbc:sybase:Tds:{host}:{port}?ServiceName={database}",
+  "defaultPort": 5000
+}

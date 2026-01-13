@@ -93,7 +93,7 @@ func printReplHelp(w io.Writer) {
 	for _, it := range items {
 		if it.Group != currentGroup {
 			currentGroup = it.Group
-			fmt.Fprintln(tw, fmt.Sprintf("[%s]", currentGroup))
+			fmt.Fprintf(tw, "[%s]\n", currentGroup)
 		}
 		fmt.Fprintf(tw, "  %s\t%s\n", it.Command, it.Description)
 	}
@@ -192,6 +192,17 @@ func replRegistry() []replCommand {
 			},
 			Run: func(ctx *replDispatchContext) (bool, bool) {
 				return handleReplDriverCommands(ctx.Cmd, ctx.Line, ctx.HistoryMode, ctx.Input, ctx.Client), false
+			},
+		},
+		{
+			Names: []string{"list profiles", "list profile"},
+			Group: "CLI",
+			Help:  replHelpItem{Group: "CLI", Command: "list profiles [--filter key=value ...]", Description: "List connection profiles from ~/.swissql/connections.json"},
+			Match: func(input string, lower string) bool {
+				return strings.HasPrefix(lower, "list profiles") || strings.HasPrefix(lower, "list profile")
+			},
+			Run: func(ctx *replDispatchContext) (bool, bool) {
+				return handleReplProfileCommands(ctx.Cmd, ctx.Line, ctx.HistoryMode, ctx.Input), false
 			},
 		},
 		{

@@ -206,6 +206,12 @@ public class JdbcDriverAutoLoader {
                 loader
         );
         driverRegistry.upsertDirectoryEntry(entry);
+
+        if (manifest.getAliases() != null) {
+            for (String alias : manifest.getAliases()) {
+                driverRegistry.upsertAlias(alias, entry);
+            }
+        }
     }
 
     private void validateManifest(String dbType, DriverManifest manifest) {

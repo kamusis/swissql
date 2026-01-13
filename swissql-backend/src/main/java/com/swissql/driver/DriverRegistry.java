@@ -172,6 +172,36 @@ public class DriverRegistry {
     }
 
     /**
+     * Register an alias dbType entry that resolves to the provided canonical entry.
+     *
+     * @param alias alias dbType
+     * @param canonicalEntry canonical entry
+     */
+    public void upsertAlias(String alias, Entry canonicalEntry) {
+        if (alias == null || alias.isBlank() || canonicalEntry == null) {
+            return;
+        }
+        String normalizedAlias = alias.trim().toLowerCase();
+        if (normalizedAlias.isBlank()) {
+            return;
+        }
+        if (normalizedAlias.equalsIgnoreCase(canonicalEntry.getDbType())) {
+            return;
+        }
+
+        Entry aliasEntry = new Entry(
+                normalizedAlias,
+                canonicalEntry.getSource(),
+                canonicalEntry.getManifest(),
+                canonicalEntry.getJarPaths(),
+                canonicalEntry.getDiscoveredDriverClasses(),
+                canonicalEntry.getLastLoadedAt(),
+                canonicalEntry.getClassLoader()
+        );
+        entriesByDbType.put(normalizedAlias, aliasEntry);
+    }
+
+    /**
      * List all driver entries.
      *
      * @return entries

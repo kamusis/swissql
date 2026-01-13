@@ -640,7 +640,8 @@ public class SwissQLController {
                              request.getCollectorId(),
                              request.getCollectorRef(),
                              request.getQueryId(),
-                             request.getParams()
+                             request.getParams(),
+                             request.getArgs()
                      ));
                  }
 

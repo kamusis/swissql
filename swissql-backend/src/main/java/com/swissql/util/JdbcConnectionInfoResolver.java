@@ -90,6 +90,10 @@ public class JdbcConnectionInfoResolver {
             throw new IllegalArgumentException("jdbcUrlTemplate is required");
         }
         String db = database != null ? database : "";
+        // TODO: Support additional template placeholders for special JDBC parameters
+        // - Informix: {server} for INFORMIXSERVER parameter
+        // - SQL Server: current template may not match DBeaver format (jdbc:sqlserver://;serverName=host;port=port;databaseName=database)
+        // - Sybase: {database} is used as ServiceName query parameter, verify this works correctly
         return template
                 .replace("{host}", host != null ? host : "")
                 .replace("{port}", String.valueOf(port))

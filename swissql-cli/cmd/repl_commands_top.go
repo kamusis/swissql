@@ -70,7 +70,7 @@ func renderCollectorResult(w io.Writer, snapshot *client.CollectorResult) {
 	}
 	fmt.Fprintln(w)
 
-	if snapshot.Layers == nil || len(snapshot.Layers) == 0 {
+	if len(snapshot.Layers) == 0 {
 		fmt.Fprintln(w, "(no layers)")
 		return
 	}

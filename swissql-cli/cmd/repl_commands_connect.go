@@ -1,12 +1,8 @@
 package cmd
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
-	"net/url"
 	"strings"
-	"time"
 
 	"github.com/kamusis/swissql/swissql-cli/internal/client"
 	"github.com/kamusis/swissql/swissql-cli/internal/config"
@@ -33,6 +29,62 @@ func handleReplConnectCommand(cmd *cobra.Command, line *liner.State, historyMode
 		return false, config.SessionEntry{}, ""
 	}
 
+	if len(fields) >= 3 && strings.EqualFold(fields[1], "--profile") {
+		profileName := strings.TrimSpace(strings.Trim(fields[2], "\"'"))
+		if profileName == "" {
+			fmt.Println("Error: connect --profile requires a profile name")
+			return true, config.SessionEntry{}, ""
+		}
+
+		if shouldRecordHistory(historyMode, input, false) {
+			line.AppendHistory("connect --profile " + profileName)
+		}
+
+		profile, err := config.GetProfile(profileName)
+		if err != nil {
+			fmt.Printf("failed to load profile: %v\n", err)
+			return true, config.SessionEntry{}, ""
+		}
+		if profile == nil {
+			fmt.Printf("profile '%s' not found\n", profileName)
+			return true, config.SessionEntry{}, ""
+		}
+
+		dbType := config.NormalizeDbType(profile.DBType)
+		dsn, pending, err := buildDSNWithCredentials(profile)
+		if err != nil {
+			fmt.Printf("failed to build DSN: %v\n", err)
+			return true, config.SessionEntry{}, ""
+		}
+
+		resp, err := connectWithClient(c, int(c.Timeout.Milliseconds()), false, dsn, dbType)
+		if err != nil {
+			fmt.Printf("%v\n", err)
+			return true, config.SessionEntry{}, ""
+		}
+
+		if pending != nil && pending.ShouldSave {
+			if pending.UpdateProfile {
+				profile.SavePassword = true
+				if _, err := config.AddProfile(profileName, profile, config.ConflictOverwrite); err != nil {
+					fmt.Printf("failed to update profile: %v\n", err)
+					return true, config.SessionEntry{}, ""
+				}
+			}
+			if err := config.SetCredentials(profile.ID, pending.Username, pending.Password); err != nil {
+				fmt.Printf("failed to save credentials: %v\n", err)
+				return true, config.SessionEntry{}, ""
+			}
+		}
+
+		newEntry, newName, err := persistConnectedSession(c.BaseURL, dbType, dsn, "", resp.SessionId)
+		if err != nil {
+			fmt.Printf("%v\n", err)
+			return true, config.SessionEntry{}, ""
+		}
+		return true, newEntry, newName
+	}
+
 	dsn := strings.TrimSpace(strings.Trim(trimmed[len(fields[0]):], " \t"))
 	dsn = strings.Trim(dsn, "\"'")
 	if dsn == "" {
@@ -45,80 +97,17 @@ func handleReplConnectCommand(cmd *cobra.Command, line *liner.State, historyMode
 		line.AppendHistory("connect " + masked)
 	}
 
-	dbType := "oracle" // Default
-	if parsed, err := url.Parse(dsn); err == nil {
-		if strings.TrimSpace(parsed.Scheme) != "" {
-			dbType = strings.ToLower(parsed.Scheme)
-		}
-	}
-	if dbType == "postgresql" {
-		dbType = "postgres"
-	}
-
-	if dbType != "oracle" && dbType != "postgres" {
-		drivers, err := c.MetaDrivers()
-		if err != nil {
-			fmt.Printf("%v\n", err)
-			return true, config.SessionEntry{}, ""
-		}
-		if !drivers.HasDbType(dbType) {
-			fmt.Printf("unknown dbType %q. Ensure the backend has loaded the JDBC driver and try again\n", dbType)
-			return true, config.SessionEntry{}, ""
-		}
-	}
-
-	req := &client.ConnectRequest{
-		Dsn:    dsn,
-		DbType: dbType,
-		Options: client.ConnectOptions{
-			ReadOnly:            false,
-			UseMcp:              false,
-			ConnectionTimeoutMs: int(c.Timeout.Milliseconds()),
-		},
-	}
-
-	resp, err := c.Connect(req)
+	dbType := inferDbTypeFromDsn(dsn)
+	resp, err := connectWithClient(c, int(c.Timeout.Milliseconds()), false, dsn, dbType)
 	if err != nil {
 		fmt.Printf("%v\n", err)
 		return true, config.SessionEntry{}, ""
 	}
 
-	buf := make([]byte, 4)
-	if _, err := rand.Read(buf); err != nil {
-		fmt.Printf("failed to generate session name: %v\n", err)
-		return true, config.SessionEntry{}, ""
-	}
-	name = fmt.Sprintf("%s-%s", dbType, hex.EncodeToString(buf))
-
-	now := time.Now()
-	entry = config.SessionEntry{
-		Name:       name,
-		SessionId:  resp.SessionId,
-		ServerURL:  c.BaseURL,
-		DbType:     dbType,
-		DsnMasked:  config.MaskDsn(dsn),
-		CreatedAt:  now,
-		LastUsedAt: now,
-	}
-
-	reg, err := config.LoadRegistry()
+	newEntry, newName, err := persistConnectedSession(c.BaseURL, dbType, dsn, "", resp.SessionId)
 	if err != nil {
 		fmt.Printf("%v\n", err)
 		return true, config.SessionEntry{}, ""
 	}
-	reg.UpsertSession(entry)
-	if err := config.SaveRegistry(reg); err != nil {
-		fmt.Printf("%v\n", err)
-		return true, config.SessionEntry{}, ""
-	}
-
-	cfg, _ := config.LoadConfig()
-	if cfg != nil {
-		cfg.CurrentName = name
-		if err := config.SaveConfig(cfg); err != nil {
-			fmt.Printf("Warning: could not save config: %v\n", err)
-		}
-	}
-
-	return true, entry, name
+	return true, newEntry, newName
 }

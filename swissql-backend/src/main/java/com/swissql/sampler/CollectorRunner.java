@@ -1,20 +1,21 @@
 package com.swissql.sampler;
 
-import com.swissql.api.ExecuteResponse;
 import com.swissql.api.QueryResult;
+import com.swissql.api.ExecuteResponse;
 import com.swissql.model.CollectorConfig;
 import com.swissql.model.CollectorDefinition;
 import com.swissql.model.CollectorResult;
 import com.swissql.model.QueryConfig;
-import org.springframework.stereotype.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 
 import java.sql.Connection;
+import java.util.LinkedHashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.ArrayList;
 
 /**
  * Internal collector runner used by both HTTP controllers and samplers.
@@ -73,6 +74,18 @@ public class CollectorRunner {
     }
 
     public QueryResult runQuery(Connection conn, String dbType, String collectorId, String collectorRef, String queryId, Map<String, Object> params) {
+        return runQuery(conn, dbType, collectorId, collectorRef, queryId, params, null);
+    }
+
+    public QueryResult runQuery(
+            Connection conn,
+            String dbType,
+            String collectorId,
+            String collectorRef,
+            String queryId,
+            Map<String, Object> params,
+            List<String> args
+    ) {
         if (queryId == null || queryId.isBlank()) {
             throw new IllegalArgumentException("query_id is required");
         }
@@ -80,8 +93,15 @@ public class CollectorRunner {
         ResolvedQuery resolved = resolveQuery(conn, dbType, collectorId, collectorRef, queryId);
         QueryConfig queryConfig = resolved.queryConfig;
 
+        Map<String, Object> mergedParams = mergeParams(queryConfig, params, args);
+
         try {
-            ExecuteResponse exec = genericCollector.executeQueryExecuteResponse(conn, queryConfig.getSql(), queryConfig.getSingleRow(), params);
+            ExecuteResponse exec = genericCollector.executeQueryExecuteResponse(
+                    conn,
+                    queryConfig.getSql(),
+                    queryConfig.getSingleRow(),
+                    mergedParams
+            );
             QueryResult out = new QueryResult();
             out.setDbType(dbType);
             out.setCollectorId(resolved.collectorId);
@@ -121,6 +141,29 @@ public class CollectorRunner {
             );
             throw new RuntimeException(detail, e);
         }
+    }
+
+    private static Map<String, Object> mergeParams(QueryConfig queryConfig, Map<String, Object> params, List<String> args) {
+        Map<String, Object> merged = new LinkedHashMap<>();
+        if (args != null && !args.isEmpty()) {
+            List<String> names = queryConfig != null ? queryConfig.getParameters() : null;
+            if (names == null || names.isEmpty()) {
+                throw new IllegalArgumentException("Query does not accept positional args");
+            }
+            if (args.size() > names.size()) {
+                throw new IllegalArgumentException("Too many args: expected at most " + names.size() + ", got " + args.size());
+            }
+            for (int i = 0; i < args.size(); i++) {
+                String name = names.get(i);
+                if (name != null && !name.isBlank()) {
+                    merged.put(name, args.get(i));
+                }
+            }
+        }
+        if (params != null && !params.isEmpty()) {
+            merged.putAll(params);
+        }
+        return merged.isEmpty() ? null : merged;
     }
 
     private ResolvedQuery resolveQuery(Connection conn, String dbType, String collectorId, String collectorRef, String queryId) {

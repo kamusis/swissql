@@ -2,6 +2,7 @@ package com.swissql.service;
 
 import com.swissql.api.ConnectRequest;
 import com.swissql.model.SessionInfo;
+import com.swissql.util.DbTypeNormalizer;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
@@ -26,10 +27,14 @@ public class SessionManager {
     public SessionInfo createSession(ConnectRequest request) {
         String sessionId = UUID.randomUUID().toString();
         OffsetDateTime now = OffsetDateTime.now();
+
+        String normalizedDbType = DbTypeNormalizer.normalize(request.getDbType());
+        request.setDbType(normalizedDbType);
+
         SessionInfo sessionInfo = SessionInfo.builder()
                 .sessionId(sessionId)
                 .dsn(request.getDsn())
-                .dbType(request.getDbType())
+                .dbType(normalizedDbType)
                 .options(request.getOptions())
                 .createdAt(now)
                 .lastAccessedAt(now)

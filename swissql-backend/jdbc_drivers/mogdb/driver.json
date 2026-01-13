@@ -1,5 +1,6 @@
 {
   "dbType": "mogdb",
+  "aliases": ["opengauss"],
   "driverClass": "io.mogdb.Driver",
   "jdbcUrlTemplate": "jdbc:mogdb://{host}:{port}/{database}",
   "defaultPort": 26000

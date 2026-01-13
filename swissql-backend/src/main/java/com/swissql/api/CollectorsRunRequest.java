@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import lombok.Data;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -17,4 +18,5 @@ public class CollectorsRunRequest {
     private String collectorRef;
     private String queryId;
     private Map<String, Object> params;
+    private List<String> args;
 }

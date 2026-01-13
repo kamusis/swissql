@@ -1,0 +1,6 @@
+{
+  "dbType": "db2",
+  "driverClass": "com.ibm.db2.jcc.DB2Driver",
+  "jdbcUrlTemplate": "jdbc:db2://{host}:{port}/{database}",
+  "defaultPort": 50000
+}
