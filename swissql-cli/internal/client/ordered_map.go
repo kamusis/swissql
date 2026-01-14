@@ -1,9 +1,5 @@
 package client
 
-// TODO(P1): Add documentation: OrderedMap should only be used for TopSnapshot
-// to preserve field order stability. Avoid using for other API responses
-// to maintain simplicity.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -44,11 +40,6 @@ func (m *OrderedMap) UnmarshalJSON(data []byte) error {
 
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
-	// TODO(P1): UseNumber() is called here but json.Unmarshal(raw, &v) at line 69
-	// uses default decoder which converts numbers to float64. Either:
-	// 1. Remove UseNumber() if precision doesn't matter, OR
-	// 2. Use same decoder to properly decode values as json.Number
-
 	tok, err := dec.Token()
 	if err != nil {
 		return err
@@ -74,7 +65,7 @@ func (m *OrderedMap) UnmarshalJSON(data []byte) error {
 		}
 
 		var v interface{}
-		if err := json.Unmarshal(raw, &v); err != nil {
+		if err := dec.Decode(&v); err != nil {
 			return err
 		}
 		m.Set(key, v)

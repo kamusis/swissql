@@ -45,9 +45,6 @@ import java.sql.ResultSet;
 @RequestMapping("/v1")
 public class SwissQLController {
 
-    // TODO: Unify backend JSON DTO naming strategy to snake_case across all API payloads.
-    // See: design/api-contract-snake-case-audit.md
-
     private static final Logger log = LoggerFactory.getLogger(SwissQLController.class);
 
     private final SessionManager sessionManager;
