@@ -50,6 +50,88 @@ swissql connect "oracle://user:password@host:port/serviceName"
 
 ## Advanced usage
 
+### DBeaver Project Import
+
+SwissQL can import connection profiles from DBeaver `.dbp` project files:
+
+```bash
+# Import all connections from a DBeaver project
+swissql import-dbeaver-project --dbp /path/to/project.dbp
+
+# Import with prefix for profile names
+swissql import-dbeaver-project --dbp project.dbp --conn_prefix "prod"
+
+# Dry run to see what would be created
+swissql import-dbeaver-project --dbp project.dbp --dry_run
+
+# Handle conflicts (skip, fail, or overwrite)
+swissql import-dbeaver-project --dbp project.dbp --on_conflict overwrite
+```
+
+**Features:**
+- Automatic database type detection and DSN conversion
+- Profile name sanitization and conflict handling
+- Secure credential handling (passwords not imported, prompted on first use)
+- Support for various database types (Oracle, PostgreSQL, MySQL, SQL Server, DB2, Informix, etc.)
+
+### Profile Management
+
+SwissQL supports persistent connection profiles with encrypted credential storage:
+
+```bash
+# List all profiles
+swissql list profiles
+
+# List profiles with filtering
+swissql list profiles --filter db_type=postgres
+swissql list profiles --filter name=prod --filter save_password=true
+
+# Connect using saved profile
+swissql connect --profile my-oracle-db
+# Or shorthand in REPL:
+swissql> connect my-oracle-db
+```
+
+**Profile Storage:**
+- Profiles: `~/.swissql/connections.json`
+- Credentials: `~/.swissql/credentials.json` (AES-CBC encrypted)
+- Automatic credential prompting and optional saving
+
+### Driver Support
+
+SwissQL supports both built-in and directory-provided JDBC drivers:
+
+**Built-in Drivers:**
+- Oracle (ojdbc11)
+- PostgreSQL (postgresql)
+
+**Directory-provided Drivers:**
+Place JDBC drivers and manifests in `swissql-backend/jdbc_drivers/<db_type>/`:
+
+```
+jdbc_drivers/
+├── mysql/
+│   ├── driver.json
+│   └── mysql-connector-j-8.x.x.jar
+├── sqlserver/
+│   ├── driver.json
+│   └── mssql-jdbc-12.x.x.jar
+└── yashandb/
+    ├── driver.json
+    └── yasdb-jdbc-23.x.x.jar
+```
+
+**Driver Manifest Example:**
+```json
+{
+  "dbType": "mysql",
+  "aliases": ["mariadb"],
+  "driverClass": "com.mysql.cj.jdbc.Driver",
+  "jdbcUrlTemplate": "jdbc:mysql://{host}:{port}/{database}",
+  "defaultPort": 3306
+}
+```
+
 - **Enable AI features (Docker Compose + Docker secrets)**
 
 If you want to use `/ai ...`, you can enable the AI gateway by providing a few configuration values as Docker secrets (no `application.properties` file and no `/config` mount required).
@@ -180,6 +262,9 @@ The backend currently implements the following REST endpoints:
   - `POST /v1/ai/generate` (generates SQL JSON; does not execute)
   - `GET /v1/ai/context?session_id=...&limit=...`
   - `POST /v1/ai/context/clear`
+- **Driver management**
+  - `GET /v1/meta/drivers` (list loaded JDBC drivers)
+  - `POST /v1/meta/drivers/reload` (reload drivers from directory)
 
 The CLI currently provides an interactive REPL with the following commands:
 
@@ -191,6 +276,8 @@ The CLI currently provides an interactive REPL with the following commands:
   - `set display expanded on|off` (expanded display mode)
   - `set display width <n>` (set max column width)
   - `set output table|csv|tsv|json` (set output format)
+  - `import-dbeaver-project` (import DBeaver .dbp project connections)
+  - `list profiles` (list saved connection profiles with filtering)
 - **psql-compat (\\)**
   - `\conninfo` (show current session and backend information)
   - `\d <name>` (alias: `desc`) (describe a table/view)
