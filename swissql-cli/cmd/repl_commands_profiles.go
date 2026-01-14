@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -50,33 +51,33 @@ func handleReplProfileCommands(cmd *cobra.Command, line *liner.State, historyMod
 		}
 
 		rows = append(rows, map[string]interface{}{
-			"name":                 name,
-			"id":                   p.ID,
-			"db_type":              p.DBType,
-			"dsn":                  config.MaskDsn(p.DSN),
-			"url":                  maskJdbcUrl(p.URL),
-			"save_password":        p.SavePassword,
-			"source_kind":          p.Source.Kind,
-			"source_provider":      p.Source.Provider,
-			"source_driver":        p.Source.Driver,
-			"source_connection_id": p.Source.ConnectionID,
+			"name":          name,
+			"db_type":       p.DBType,
+			"dsn":           config.MaskDsn(p.DSN),
+			"save_password": p.SavePassword,
 		})
 	}
+
+	// Sort by db_type, then name
+	sort.Slice(rows, func(i, j int) bool {
+		dbTypeI := rows[i]["db_type"].(string)
+		dbTypeJ := rows[j]["db_type"].(string)
+		if dbTypeI != dbTypeJ {
+			return dbTypeI < dbTypeJ
+		}
+		nameI := rows[i]["name"].(string)
+		nameJ := rows[j]["name"].(string)
+		return nameI < nameJ
+	})
 
 	resp := &client.ExecuteResponse{
 		Type: "tabular",
 		Data: client.DataContent{
 			Columns: []client.ColumnDefinition{
 				{Name: "name", Type: "string"},
-				{Name: "id", Type: "string"},
 				{Name: "db_type", Type: "string"},
 				{Name: "dsn", Type: "string"},
-				{Name: "url", Type: "string"},
 				{Name: "save_password", Type: "bool"},
-				{Name: "source_kind", Type: "string"},
-				{Name: "source_provider", Type: "string"},
-				{Name: "source_driver", Type: "string"},
-				{Name: "source_connection_id", Type: "string"},
 			},
 			Rows: rows,
 		},
@@ -97,16 +98,10 @@ func validateProfileFilterKeys(filters map[string][]string) error {
 	}
 
 	supported := map[string]struct{}{
-		"name":                 {},
-		"id":                   {},
-		"db_type":              {},
-		"dsn":                  {},
-		"url":                  {},
-		"save_password":        {},
-		"source.kind":          {},
-		"source.provider":      {},
-		"source.driver":        {},
-		"source.connection_id": {},
+		"name":          {},
+		"db_type":       {},
+		"dsn":           {},
+		"save_password": {},
 	}
 
 	unknown := make([]string, 0)
@@ -164,27 +159,12 @@ func matchProfileFilters(name string, p config.Profile, filters map[string][]str
 		switch key {
 		case "name":
 			return name
-		case "id":
-			return p.ID
 		case "db_type":
 			return p.DBType
 		case "dsn":
 			return p.DSN
-		case "url":
-			return p.URL
 		case "save_password":
-			if p.SavePassword {
-				return "true"
-			}
-			return "false"
-		case "source.kind":
-			return p.Source.Kind
-		case "source.provider":
-			return p.Source.Provider
-		case "source.driver":
-			return p.Source.Driver
-		case "source.connection_id":
-			return p.Source.ConnectionID
+			return fmt.Sprintf("%v", p.SavePassword)
 		default:
 			return ""
 		}
@@ -212,20 +192,4 @@ func matchProfileFilters(name string, p config.Profile, filters map[string][]str
 		}
 	}
 	return true
-}
-
-// maskJdbcUrl attempts to mask credentials in a JDBC URL for display.
-func maskJdbcUrl(raw string) string {
-	if strings.TrimSpace(raw) == "" {
-		return ""
-	}
-	if !strings.HasPrefix(raw, "jdbc:") {
-		return raw
-	}
-
-	rest := strings.TrimPrefix(raw, "jdbc:")
-	if strings.Contains(rest, "://") {
-		return "jdbc:" + config.MaskDsn(rest)
-	}
-	return raw
 }

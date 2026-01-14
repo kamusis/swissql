@@ -86,6 +86,15 @@ public class SwissQLController {
      */
     @PostMapping("/connect")
     public ResponseEntity<?> connect(@Valid @RequestBody ConnectRequest request) {
+        String dsn = request != null ? request.getDsn() : null;
+        if (!isValidDsn(dsn)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ErrorResponse.builder()
+                    .code("DSN_INVALID")
+                    .message("Invalid DSN: expected '<db_type>://...'. Example: postgres://user:pass@host:5432/db")
+                    .traceId(MDC.get("trace_id"))
+                    .build());
+        }
+
         com.swissql.model.SessionInfo sessionInfo = null;
         try {
             sessionInfo = sessionManager.createSession(request);
@@ -119,6 +128,22 @@ public class SwissQLController {
                     .traceId(MDC.get("trace_id"))
                     .build());
         }
+    }
+
+    private static boolean isValidDsn(String dsn) {
+        if (dsn == null) {
+            return false;
+        }
+        String trimmed = dsn.trim();
+        if (trimmed.isBlank()) {
+            return false;
+        }
+        int idx = trimmed.indexOf("://");
+        if (idx <= 0) {
+            return false;
+        }
+        String scheme = trimmed.substring(0, idx).trim();
+        return !scheme.isBlank();
     }
 
     /**

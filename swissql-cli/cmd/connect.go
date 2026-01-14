@@ -105,7 +105,7 @@ var connectCmd = &cobra.Command{
 	},
 }
 
-func connectWithDsn(cmd *cobra.Command, server string, timeout int, useMcp bool, disconnectCurrent bool, name string, dsn string, dbType string) (*client.ConnectResponse, error) {
+func connectWithDsn(_ *cobra.Command, server string, timeout int, useMcp bool, disconnectCurrent bool, _ string, dsn string, dbType string) (*client.ConnectResponse, error) {
 	fmt.Printf("Connecting to %s via backend %s...\n", dsn, server)
 
 	c := client.NewClient(server, time.Duration(timeout)*time.Millisecond)
@@ -159,7 +159,7 @@ func connectWithClient(c *client.Client, timeout int, useMcp bool, dsn string, d
 	return resp, nil
 }
 
-func finalizeConnect(cmd *cobra.Command, server string, timeout int, dbType string, dsn string, name string, sessionId string) error {
+func finalizeConnect(cmd *cobra.Command, server string, _ int, dbType string, dsn string, name string, sessionId string) error {
 	_, _, err := persistConnectedSession(server, dbType, dsn, name, sessionId)
 	if err != nil {
 		return err

@@ -114,9 +114,10 @@ func runImportDbeaverProject(cmd *cobra.Command, args []string) error {
 			if created {
 				result.Created++
 			} else {
-				if strategy == config.ConflictSkip {
+				switch strategy {
+				case config.ConflictSkip:
 					result.Skipped++
-				} else if strategy == config.ConflictOverwrite {
+				case config.ConflictOverwrite:
 					result.Overwritten++
 				}
 			}

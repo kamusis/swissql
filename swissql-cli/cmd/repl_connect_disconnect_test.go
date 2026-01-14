@@ -12,7 +12,7 @@ import (
 	"github.com/kamusis/swissql/swissql-cli/internal/client"
 )
 
-func TestReplConnect_DisconnectsCurrentSessionBeforeConnect(t *testing.T) {
+func TestReplConnect_DisconnectsCurrentSessionAfterConnect(t *testing.T) {
 	t.Helper()
 
 	tmp := t.TempDir()
@@ -66,11 +66,11 @@ func TestReplConnect_DisconnectsCurrentSessionBeforeConnect(t *testing.T) {
 	if len(calls) < 2 {
 		t.Fatalf("expected at least 2 calls, got %v", calls)
 	}
-	if calls[0] != "POST /v1/disconnect" {
-		t.Fatalf("expected first call to be disconnect, got %v", calls)
+	if calls[0] != "POST /v1/connect" {
+		t.Fatalf("expected first call to be connect, got %v", calls)
 	}
-	if calls[1] != "POST /v1/connect" {
-		t.Fatalf("expected second call to be connect, got %v", calls)
+	if calls[1] != "POST /v1/disconnect" {
+		t.Fatalf("expected second call to be disconnect, got %v", calls)
 	}
 
 	// Guardrail: ensure we didn't accidentally write config into a global path.

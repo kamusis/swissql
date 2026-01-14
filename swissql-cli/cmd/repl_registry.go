@@ -137,6 +137,14 @@ func replRegistry() []replCommand {
 				return len(fields) >= 2 && strings.EqualFold(fields[0], "connect")
 			},
 			Run: func(ctx *replDispatchContext) (bool, bool) {
+				connected, newEntry, newName := handleReplConnectCommand(ctx.Cmd, ctx.Line, ctx.HistoryMode, ctx.Input, ctx.Client)
+				if !connected {
+					return false, false
+				}
+				if strings.TrimSpace(newEntry.SessionId) == "" {
+					return true, false
+				}
+
 				if ctx.SessionId != nil && strings.TrimSpace(*ctx.SessionId) != "" {
 					if err := ctx.Client.Disconnect(*ctx.SessionId); err != nil {
 						fmt.Printf("Warning: failed to disconnect current session: %v\n", err)
@@ -157,10 +165,6 @@ func replRegistry() []replCommand {
 					}
 				}
 
-				connected, newEntry, newName := handleReplConnectCommand(ctx.Cmd, ctx.Line, ctx.HistoryMode, ctx.Input, ctx.Client)
-				if !connected {
-					return false, false
-				}
 				if ctx.SessionId != nil {
 					*ctx.SessionId = newEntry.SessionId
 				}
