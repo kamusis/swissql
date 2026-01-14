@@ -1,0 +1,6 @@
+{
+  "dbType": "informix",
+  "driverClass": "com.informix.jdbc.IfxDriver",
+  "jdbcUrlTemplate": "jdbc:informix-sqli://{host}:{port}/{database}:INFORMIXSERVER={server}",
+  "defaultPort": 9088
+}

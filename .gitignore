@@ -54,8 +54,10 @@ Thumbs.db
 # Design docs
 /design/
 
-# Agent Skills
+# Agents & Skills
+.github/agents/
 .github/skills/
+.github/copilot-instructions.md
 
 # JDBC drivers
 *.jar

@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
  * In-memory registry of JDBC drivers known to the backend.
@@ -172,13 +173,42 @@ public class DriverRegistry {
     }
 
     /**
+     * Register an alias dbType entry that resolves to the provided canonical entry.
+     *
+     * @param alias alias dbType
+     * @param canonicalEntry canonical entry
+     */
+    public void upsertAlias(String alias, Entry canonicalEntry) {
+        if (alias == null || alias.isBlank() || canonicalEntry == null) {
+            return;
+        }
+        String normalizedAlias = alias.trim().toLowerCase();
+        if (normalizedAlias.isBlank()) {
+            return;
+        }
+        if (normalizedAlias.equalsIgnoreCase(canonicalEntry.getDbType())) {
+            return;
+        }
+
+        // Store the canonical entry under the alias key so that downstream logic sees the
+        // canonical dbType and does not need additional alias normalization.
+        entriesByDbType.put(normalizedAlias, canonicalEntry);
+    }
+
+    /**
      * List all driver entries.
      *
      * @return entries
      */
     public List<Entry> list() {
         List<Entry> entries = new ArrayList<>(entriesByDbType.values());
-        entries.sort((a, b) -> a.getDbType().compareToIgnoreCase(b.getDbType()));
+        entries = entries.stream()
+                .filter(e -> e != null && e.getDbType() != null)
+                .collect(Collectors.toMap(e -> e.getDbType().toLowerCase(), e -> e, (a, b) -> a))
+                .values()
+                .stream()
+                .sorted((a, b) -> a.getDbType().compareToIgnoreCase(b.getDbType()))
+                .toList();
         return Collections.unmodifiableList(entries);
     }
 

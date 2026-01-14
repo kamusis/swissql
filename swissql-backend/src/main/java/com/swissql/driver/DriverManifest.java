@@ -17,6 +17,9 @@ public class DriverManifest {
     @JsonProperty("dbType")
     private String dbType;
 
+    @JsonProperty("aliases")
+    private java.util.List<String> aliases;
+
     @JsonProperty("driverClass")
     private String driverClass;
 
@@ -42,6 +45,24 @@ public class DriverManifest {
      */
     public void setDbType(String dbType) {
         this.dbType = dbType;
+    }
+
+    /**
+     * Get aliases.
+     *
+     * @return aliases
+     */
+    public java.util.List<String> getAliases() {
+        return aliases;
+    }
+
+    /**
+     * Set aliases.
+     *
+     * @param aliases aliases
+     */
+    public void setAliases(java.util.List<String> aliases) {
+        this.aliases = aliases;
     }
 
     /**

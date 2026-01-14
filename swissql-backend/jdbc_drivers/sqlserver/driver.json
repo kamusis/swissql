@@ -1,0 +1,7 @@
+{
+  "dbType": "sqlserver",
+  "aliases": ["mssql"],
+  "driverClass": "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+  "jdbcUrlTemplate": "jdbc:sqlserver://{host}:{port};databaseName={database}",
+  "defaultPort": 1433
+}

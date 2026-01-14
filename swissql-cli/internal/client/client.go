@@ -799,6 +799,7 @@ type CollectorsRunRequest struct {
 	CollectorRef string         `json:"collector_ref,omitempty"`
 	QueryId      string         `json:"query_id,omitempty"`
 	Params       map[string]any `json:"params,omitempty"`
+	Args         []string       `json:"args,omitempty"`
 }
 
 func (c *Client) SamplerUpsert(sessionId string, samplerId string, definition *SamplerDefinition) (*SamplerControlResponse, error) {

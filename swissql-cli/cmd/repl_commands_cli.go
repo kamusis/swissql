@@ -17,18 +17,6 @@ import (
 	"golang.org/x/term"
 )
 
-// handleReplHelp prints the REPL help text.
-func handleReplHelp(line *liner.State, historyMode string, input string) bool {
-	if !strings.EqualFold(strings.TrimSpace(input), "help") {
-		return false
-	}
-	if shouldRecordHistory(historyMode, input, false) {
-		line.AppendHistory(input)
-	}
-	printReplHelp(getOutputWriter())
-	return true
-}
-
 // handleReplDetachExit handles detach/exit/quit commands.
 func handleReplDetachExit(
 	cmd *cobra.Command,

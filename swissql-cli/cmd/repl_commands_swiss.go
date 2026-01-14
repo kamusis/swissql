@@ -184,20 +184,26 @@ func handleReplSwissCommands(
 			queryId = extra[0]
 			req.QueryId = queryId
 		} else if len(extra) >= 2 {
-			// Special-case: \swiss run sqltext <sql_id>
-			if len(extra) == 2 && strings.EqualFold(extra[0], "sqltext") {
-				queryId = "sqltext"
-				req.QueryId = queryId
-				params["sql_id"] = extra[1]
-			} else {
-				collector := extra[0]
+			// Explicit when collector_ref is provided (contains ':') or when collector_id is given with at least 3 tokens.
+			if strings.Contains(extra[0], ":") {
+				req.CollectorRef = extra[0]
 				queryId = extra[1]
 				req.QueryId = queryId
-				if strings.Contains(collector, ":") {
-					req.CollectorRef = collector
-				} else {
-					req.CollectorId = collector
+				if len(extra) > 2 {
+					req.Args = extra[2:]
 				}
+			} else if len(extra) >= 3 {
+				req.CollectorId = extra[0]
+				queryId = extra[1]
+				req.QueryId = queryId
+				if len(extra) > 2 {
+					req.Args = extra[2:]
+				}
+			} else {
+				// Shorthand: \swiss run <query_id> <arg...>
+				queryId = extra[0]
+				req.QueryId = queryId
+				req.Args = extra[1:]
 			}
 		}
 		if len(params) > 0 {

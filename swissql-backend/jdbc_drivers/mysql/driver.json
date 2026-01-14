@@ -1,0 +1,6 @@
+{
+  "dbType": "mysql",
+  "driverClass": "com.mysql.cj.jdbc.Driver",
+  "jdbcUrlTemplate": "jdbc:mysql://{host}:{port}/{database}",
+  "defaultPort": 3306
+}

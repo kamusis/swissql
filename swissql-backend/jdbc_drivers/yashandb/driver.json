@@ -1,5 +1,6 @@
 {
   "dbType": "yashandb",
+  "aliases": ["yasdb", "yashan"],
   "driverClass": "com.yashandb.jdbc.Driver",
   "jdbcUrlTemplate": "jdbc:yasdb://{host}:{port}/{database}",
   "defaultPort": 1688

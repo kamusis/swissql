@@ -65,7 +65,7 @@ collectors:
           ORDER BY COUNT(*) DESC 
           LIMIT 10
         singleRow: false
-      topSessions:
+      top_sessions:
         description: L3 Load Attribution - Top active sessions by duration
         order: 5
         render_hint:
