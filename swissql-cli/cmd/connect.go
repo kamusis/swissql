@@ -250,30 +250,14 @@ func buildDSNWithCredentials(profile *config.Profile) (string, *pendingCredentia
 
 // buildDSNWithUserPass inserts username and password into a DSN
 func buildDSNWithUserPass(dsn, username, password string) string {
-	// Parse DSN to extract scheme, host, port, path, and query
-	parts := strings.SplitN(dsn, "://", 2)
-	if len(parts) != 2 {
+	parsedURL, err := url.Parse(dsn)
+	if err != nil {
+		// Fallback to original DSN if parsing fails, though this should be rare.
 		return dsn
 	}
 
-	scheme := parts[0]
-	rest := parts[1]
-
-	// Split into authority and path/query
-	var authority, pathQuery string
-	if idx := strings.Index(rest, "/"); idx != -1 {
-		authority = rest[:idx]
-		pathQuery = rest[idx:]
-	} else {
-		authority = rest
-		pathQuery = ""
-	}
-
-	// Build userinfo
-	userinfo := fmt.Sprintf("%s:%s", url.QueryEscape(username), url.QueryEscape(password))
-
-	// Reconstruct DSN
-	return fmt.Sprintf("%s://%s@%s%s", scheme, userinfo, authority, pathQuery)
+	parsedURL.User = url.UserPassword(username, password)
+	return parsedURL.String()
 }
 
 func init() {

@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
  * In-memory registry of JDBC drivers known to the backend.
@@ -189,16 +190,9 @@ public class DriverRegistry {
             return;
         }
 
-        Entry aliasEntry = new Entry(
-                normalizedAlias,
-                canonicalEntry.getSource(),
-                canonicalEntry.getManifest(),
-                canonicalEntry.getJarPaths(),
-                canonicalEntry.getDiscoveredDriverClasses(),
-                canonicalEntry.getLastLoadedAt(),
-                canonicalEntry.getClassLoader()
-        );
-        entriesByDbType.put(normalizedAlias, aliasEntry);
+        // Store the canonical entry under the alias key so that downstream logic sees the
+        // canonical dbType and does not need additional alias normalization.
+        entriesByDbType.put(normalizedAlias, canonicalEntry);
     }
 
     /**
@@ -208,7 +202,13 @@ public class DriverRegistry {
      */
     public List<Entry> list() {
         List<Entry> entries = new ArrayList<>(entriesByDbType.values());
-        entries.sort((a, b) -> a.getDbType().compareToIgnoreCase(b.getDbType()));
+        entries = entries.stream()
+                .filter(e -> e != null && e.getDbType() != null)
+                .collect(Collectors.toMap(e -> e.getDbType().toLowerCase(), e -> e, (a, b) -> a))
+                .values()
+                .stream()
+                .sorted((a, b) -> a.getDbType().compareToIgnoreCase(b.getDbType()))
+                .toList();
         return Collections.unmodifiableList(entries);
     }
 

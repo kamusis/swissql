@@ -64,6 +64,11 @@ public class JdbcDriverAutoLoader {
         driverRegistry.registerBuiltin("oracle", "oracle.jdbc.OracleDriver");
         driverRegistry.registerBuiltin("postgres", "org.postgresql.Driver");
 
+        driverRegistry.find("postgres").ifPresent(postgresEntry -> {
+            driverRegistry.upsertAlias("postgresql", postgresEntry);
+            driverRegistry.upsertAlias("pg", postgresEntry);
+        });
+
         boolean enabled = getBool("swissql.jdbc-drivers.auto-load.enabled", "SWISSQL_JDBC_DRIVERS_AUTO_LOAD_ENABLED", true);
         if (!enabled) {
             log.info("JDBC driver auto-load is DISABLED");

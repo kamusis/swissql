@@ -1,6 +1,7 @@
 package com.swissql.service;
 
 import com.swissql.api.ConnectRequest;
+import com.swissql.driver.DriverRegistry;
 import com.swissql.model.SessionInfo;
 import com.swissql.util.DbTypeNormalizer;
 import org.springframework.stereotype.Service;
@@ -16,10 +17,12 @@ import java.util.concurrent.TimeUnit;
 
 @Service
 public class SessionManager {
+    private final DriverRegistry driverRegistry;
     private final Map<String, SessionInfo> sessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
-    public SessionManager() {
+    public SessionManager(DriverRegistry driverRegistry) {
+        this.driverRegistry = driverRegistry;
         // Run cleanup task every 5 minutes
         scheduler.scheduleAtFixedRate(this::cleanupExpiredSessions, 5, 5, TimeUnit.MINUTES);
     }
@@ -29,12 +32,14 @@ public class SessionManager {
         OffsetDateTime now = OffsetDateTime.now();
 
         String normalizedDbType = DbTypeNormalizer.normalize(request.getDbType());
-        request.setDbType(normalizedDbType);
+        String canonicalDbType = driverRegistry.find(normalizedDbType)
+                .map(DriverRegistry.Entry::getDbType)
+                .orElse(normalizedDbType);
 
         SessionInfo sessionInfo = SessionInfo.builder()
                 .sessionId(sessionId)
                 .dsn(request.getDsn())
-                .dbType(normalizedDbType)
+                .dbType(canonicalDbType)
                 .options(request.getOptions())
                 .createdAt(now)
                 .lastAccessedAt(now)
