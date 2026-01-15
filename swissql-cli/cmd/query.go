@@ -442,6 +442,7 @@ func renderTabularTable(cmd *cobra.Command, w io.Writer, resp *client.ExecuteRes
 		plainFlag, _ = cmd.Flags().GetBool("plain")
 	}
 	if forcePlain || plainFlag {
+		// nolint:SA1019 // tw.SymbolASCII is deprecated but still works
 		table.Options(tablewriter.WithSymbols(&tw.SymbolASCII{}))
 	}
 

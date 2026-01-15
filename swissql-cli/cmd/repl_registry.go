@@ -199,14 +199,101 @@ func replRegistry() []replCommand {
 			},
 		},
 		{
-			Names: []string{"list profiles", "list profile"},
+			Names: []string{"connmgr"},
 			Group: "CLI",
-			Help:  replHelpItem{Group: "CLI", Command: "list profiles [--filter key=value ...]", Description: "List connection profiles from ~/.swissql/connections.json"},
+			HelpItems: func() []replHelpItem {
+				return []replHelpItem{
+					{Group: "CLI", Command: "connmgr import -dbp <file> [--conn_prefix <prefix>] [--on_conflict <strategy>] [--dry_run]", Description: "Import DBeaver project connections"},
+					{Group: "CLI", Command: "connmgr list [--filter key=value ...]", Description: "List connection profiles"},
+					{Group: "CLI", Command: "connmgr remove <name> [--force]", Description: "Remove connection profile"},
+					{Group: "CLI", Command: "connmgr show <name>", Description: "Show profile details"},
+					{Group: "CLI", Command: "connmgr update <name> [--new-name <name>] [--dsn <dsn>] [--db-type <type>]", Description: "Update profile properties"},
+				}
+			},
 			Match: func(input string, lower string) bool {
-				return strings.HasPrefix(lower, "list profiles") || strings.HasPrefix(lower, "list profile")
+				return strings.HasPrefix(lower, "connmgr ")
 			},
 			Run: func(ctx *replDispatchContext) (bool, bool) {
-				return handleReplProfileCommands(ctx.Cmd, ctx.Line, ctx.HistoryMode, ctx.Input), false
+				// Parse connmgr subcommand
+				fields := strings.Fields(strings.TrimSpace(ctx.Input))
+				if len(fields) < 2 {
+					fmt.Println("Error: connmgr requires a subcommand (import, list, remove, show, update)")
+					return true, false
+				}
+
+				subcommand := fields[1]
+				ctx.MetaArgs = fields[2:]
+
+				switch strings.ToLower(subcommand) {
+				case "import":
+					// Reset global variables to default values to avoid state pollution
+					dbpPath = ""
+					connPrefix = ""
+					onConflict = "skip"
+					dryRun = false
+
+					// Parse flags and validate
+					validFlags := map[string]bool{
+						"-dbp":          true,
+						"--conn_prefix": true,
+						"--on_conflict": true,
+						"--dry_run":     true,
+					}
+
+					for i := 2; i < len(fields); i++ {
+						flag := fields[i]
+						if !validFlags[flag] {
+							fmt.Printf("Error: unknown flag '%s'\n", flag)
+							fmt.Println("Available flags: -dbp, --conn_prefix, --on_conflict, --dry_run")
+							return true, false
+						}
+
+						switch flag {
+						case "-dbp":
+							if i+1 >= len(fields) {
+								fmt.Println("Error: -dbp requires a value")
+								return true, false
+							}
+							dbpPath = fields[i+1]
+							i++
+						case "--conn_prefix":
+							if i+1 >= len(fields) {
+								fmt.Println("Error: --conn_prefix requires a value")
+								return true, false
+							}
+							connPrefix = fields[i+1]
+							i++
+						case "--on_conflict":
+							if i+1 >= len(fields) {
+								fmt.Println("Error: --on_conflict requires a value")
+								return true, false
+							}
+							onConflict = fields[i+1]
+							i++
+						case "--dry_run":
+							dryRun = true
+						}
+					}
+
+					if dbpPath == "" {
+						fmt.Println("Error: -dbp flag is required for import")
+						return true, false
+					}
+
+					return runConnmgrImport(ctx)
+				case "list":
+					return runConnmgrList(ctx)
+				case "remove":
+					return runConnmgrRemove(ctx)
+				case "show":
+					return runConnmgrShow(ctx)
+				case "update":
+					return runConnmgrUpdate(ctx)
+				default:
+					fmt.Printf("Error: unknown connmgr subcommand '%s'\n", subcommand)
+					fmt.Println("Available subcommands: import, list, remove, show, update")
+					return true, false
+				}
 			},
 		},
 		{

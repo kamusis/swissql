@@ -5,18 +5,18 @@ description: 'Create, update, and manage GitHub issues using MCP tools. Use this
 
 # GitHub Issues
 
-Manage GitHub issues using the `@modelcontextprotocol/server-github` MCP server.
+Manage GitHub issues using the `github` MCP server.
 
 ## Available MCP Tools
 
 | Tool | Purpose |
 |------|---------|
-| `mcp__github__create_issue` | Create new issues |
-| `mcp__github__update_issue` | Update existing issues |
-| `mcp__github__get_issue` | Fetch issue details |
-| `mcp__github__search_issues` | Search issues |
-| `mcp__github__add_issue_comment` | Add comments |
-| `mcp__github__list_issues` | List repository issues |
+| `mcp_issue_write` (create) | Create new issues |
+| `mcp_issue_write` (update) | Update existing issues |
+| `mcp_issue_read` | Fetch issue details |
+| `mcp_search_issues` | Search issues |
+| `mcp_add_issue_comment` | Add comments |
+| `mcp_list_issues` | List repository issues |
 
 ## Workflow
 
@@ -67,7 +67,7 @@ Always use the templates in [references/templates.md](references/templates.md). 
 
 ## Updating Issues
 
-Use `mcp__github__update_issue` with:
+Use `mcp_issue_write` (update) with:
 
 ```
 owner, repo, issue_number (required)
@@ -82,7 +82,7 @@ State values: `open`, `closed`
 
 **User**: "Create a bug issue - the login page crashes when using SSO"
 
-**Action**: Call `mcp__github__create_issue` with:
+**Action**: Call `mcp_issue_write` (create) with:
 ```json
 {
   "owner": "github",
@@ -97,7 +97,7 @@ State values: `open`, `closed`
 
 **User**: "Create a feature request for dark mode with high priority"
 
-**Action**: Call `mcp__github__create_issue` with:
+**Action**: Call `mcp_issue_write` (create) with:
 ```json
 {
   "owner": "github",

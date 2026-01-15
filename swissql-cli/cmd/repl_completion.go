@@ -16,7 +16,6 @@ type completionCache struct {
 	Schemas   []string
 	Columns   map[string][]string // key: schema.table
 	ExpiresAt time.Time
-	mu        sync.RWMutex
 }
 
 var (
