@@ -41,6 +41,9 @@ git log --since="1 week ago" --pretty=format:"%h %s" --no-merges
 - [ ] No unused imports or variables
 - [ ] Adequate code comments and documentation
 - [ ] Test coverage for new functionality
+- [ ] No code duplication (use existing helper functions)
+- [ ] Reuse existing functions from config package (LoadProfiles, SaveProfiles, GetProfile, AddProfile)
+- [ ] Extract common logic into shared helpers
 
 **Architecture Review:**
 - [ ] Follows established patterns and conventions
