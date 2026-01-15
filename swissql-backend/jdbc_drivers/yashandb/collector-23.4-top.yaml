@@ -1,0 +1,109 @@
+dbType: yashandb
+supportedVersions:
+  min: "23.0.0.0"
+  max: "23.99.99.99.99"
+description: YashanDB top collector
+collectors:
+  top:
+    description: Top performance metrics using 4-layer model (Context, Resource, Wait, Load Attribution)
+    layers:
+      context:
+        description: L0 Context - Database version, topology, role, uptime
+        order: 0
+        render_hint:
+          display_type: key_value
+          title: Context
+        sql: |
+          SELECT 
+            version AS "dbVersion",
+            (SYSDATE - startup_time) * 86400 AS "uptimeSec",
+            instance_name AS "instance",
+            instance_role AS "role",
+            status AS "status",
+            database_status AS "dbType"
+          FROM SYS.V_$INSTANCE
+        singleRow: true
+      cpu:
+        description: L1 Resource - CPU metrics
+        order: 1
+        render_hint:
+          display_type: summary_line
+          title: CPU
+        sql: |
+          SELECT 
+            0 as "dbCpuSec",
+            0 as "cpuWaitSec"
+          FROM dual
+        singleRow: true
+      sessions:
+        description: L1/L3 - Session metrics
+        order: 3
+        render_hint:
+          display_type: summary_line
+          title: Sessions
+        sql: |
+          SELECT COUNT(*) as total, 
+                 SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) as active, 
+                 SUM(CASE WHEN status = 'ACTIVE' AND wait_class IS NULL THEN 1 ELSE 0 END) as running, 
+                 SUM(CASE WHEN status = 'ACTIVE' AND wait_class IS NOT NULL THEN 1 ELSE 0 END) as waiting 
+          FROM SYS.V_$SESSION 
+          WHERE type = 'USER'
+        singleRow: true
+      waits:
+        description: L2 Wait - Top wait events
+        order: 4
+        render_hint:
+          display_type: table
+          title: Top Wait Events
+        sql: |
+          SELECT nvl(wait_class, 'CPU') as "class", 
+                 nvl(wait_event, 'ON CPU') as "name", 
+                 COUNT(*) as "count", 
+                 0 as "timeMs", 
+                 0 as "avgMs" 
+          FROM SYS.V_$SESSION 
+          WHERE type = 'USER' 
+            AND status = 'ACTIVE'
+            AND wait_class IS NOT NULL
+          GROUP BY wait_class, wait_event
+          ORDER BY COUNT(*) DESC 
+          FETCH FIRST 10 ROWS ONLY
+        singleRow: false
+      top_sessions:
+        description: L3 Load Attribution - Top active sessions by duration
+        order: 5
+        render_hint:
+          display_type: table
+          title: Top Sessions
+        sql: |
+          SELECT
+            sid,
+            "SERIAL#" as serial_number,
+            username,
+            cli_program as program,
+            status,
+            wait_class,
+            nvl(wait_event, 'ON CPU') as "event",
+            0 as "active_duration_sec",
+            nvl(sql_id, 'N/A') as "sql_id"
+          FROM SYS.V_$SESSION
+          WHERE type = 'USER'
+            AND status = 'ACTIVE'
+          ORDER BY sid
+          FETCH FIRST 10 ROWS ONLY
+        singleRow: false
+      io:
+        description: L1 Resource - I/O metrics
+        order: 2
+        render_hint:
+          display_type: summary_line
+          title: I/O
+        sql: |
+          SELECT 0 as "readIops", 
+                 0 as "writeIops", 
+                 0 as "readBytes", 
+                 0 as "writeBytes", 
+                 0 as "readLatencyMs", 
+                 0 as "writeLatencyMs" 
+          FROM dual
+        singleRow: true

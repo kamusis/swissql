@@ -1,0 +1,186 @@
+dbType: yashandb
+supportedVersions:
+  min: "23.0.0.0"
+  max: "23.99.99.99.99"
+description: YashanDB collectors (non-top)
+collectors:
+  perf:
+    description: Performance diagnostics metrics
+    queries:
+      active_transactions:
+        description: Active transactions
+        sql: |
+          SELECT t.xid as "xid", 
+                 s.sid, 
+                 s."SERIAL#" as "serial#", 
+                 s.username, 
+                 s.logon_time as start_time 
+          FROM SYS.V_$TRANSACTION t, SYS.V_$SESSION s 
+          WHERE t.ses_addr = s.paddr 
+          ORDER BY s.logon_time
+        singleRow: false
+      locks:
+        description: Current locks
+        sql: |
+          SELECT l.sid as "sid", 
+                 s."SERIAL#" as "serial#", 
+                 s.username, 
+                 l.lmode as "locked_mode", 
+                 'OBJECT' as "object_type", 
+                 'N/A' as "object_name" 
+          FROM SYS.V_$LOCK l, SYS.V_$SESSION s 
+          WHERE l.sid = s.sid 
+          ORDER BY l.lmode DESC
+        singleRow: false
+      tablespaces:
+        description: Tablespace usage
+        sql: |
+          SELECT tablespace_name, 
+                 ROUND(bytes / 1024 / 1024 / 1024, 2) as "size_gb", 
+                 0 as "free_gb", 
+                 100 as "used_percent" 
+          FROM dba_data_files
+        singleRow: false
+  memory:
+    description: Memory and SGA/PGA allocation metrics
+    queries:
+      sga_allocation:
+        description: SGA pool allocation (simplified for YashanDB)
+        sql: |
+          SELECT 
+            0 as "shared_pool_mb",
+            0 as "buffer_cache_mb",
+            0 as "log_buffer_mb",
+            0 as "java_pool_mb",
+            0 as "total_sga_mb"
+          FROM dual
+        singleRow: true
+      cache_hit_ratio:
+        description: Buffer cache hit ratio (simplified for YashanDB)
+        sql: |
+          SELECT 
+            0 as "hit_ratio_pct",
+            0 as "physical_reads",
+            0 as "physical_writes",
+            0 as "logical_reads"
+          FROM dual
+        singleRow: true
+  sessions:
+    description: Session and user activity analysis
+    queries:
+      long_running_sessions:
+        description: Sessions running for extended duration
+        sql: |
+          SELECT 
+            s.sid,
+            s."SERIAL#" as "serial#",
+            s.username,
+            s.status,
+            ROUND((SYSDATE - s.logon_time) * 1440, 0) as "duration_min",
+            nvl(s.wait_event, 'ON CPU') as "current_event",
+            s.wait_class
+          FROM SYS.V_$SESSION s
+          WHERE s.type = 'USER'
+          ORDER BY s.logon_time
+          FETCH FIRST 10 ROWS ONLY
+        singleRow: false
+  sql_analytics:
+    description: Advanced SQL analytics and efficiency metrics
+    queries:
+      top_sql_by_elapsed:
+        description: Top SQL by elapsed time (simplified for YashanDB)
+        sql: |
+          SELECT 
+            sql_id as "id", 
+            0 as "calls", 
+            0 as "elapsedMs", 
+            0 as "cpuMs", 
+            0 as "rows", 
+            0 as "ioReadMB", 
+            0 as "ioWriteMB" 
+          FROM SYS.V_$SQLTEXT 
+          WHERE rownum <= 20
+        singleRow: false
+      top_sql_by_io:
+        description: Top SQL by physical I/O operations (simplified for YashanDB)
+        sql: |
+          SELECT 
+            sql_id as "id",
+            SUBSTR(sql_text, 1, 100) as "sql_text",
+            0 as "execs",
+            0 as "phys_reads",
+            0 as "reads_per_exec",
+            0 as "read_mb"
+          FROM SYS.V_$SQLTEXT
+          WHERE rownum <= 10
+        singleRow: false
+      frequent_parse_sql:
+        description: SQL with high parse frequency (simplified for YashanDB)
+        sql: |
+          SELECT 
+            sql_id as "id",
+            SUBSTR(sql_text, 1, 100) as "sql_text",
+            0 as "parse_count",
+            0 as "exec_count",
+            0 as "parse_overhead_pct"
+          FROM SYS.V_$SQLTEXT
+          WHERE rownum <= 10
+        singleRow: false
+      inefficient_sql:
+        description: SQL with high parse ratio (simplified for YashanDB)
+        sql: |
+          SELECT 
+            sql_id as "id",
+            SUBSTR(sql_text, 1, 100) as "sql_text",
+            0 as "calls",
+            0 as "rows",
+            0 as "rows_per_exec"
+          FROM SYS.V_$SQLTEXT
+          WHERE rownum <= 10
+        singleRow: false
+  infrastructure:
+    description: Database infrastructure and storage metrics
+    queries:
+      redo_log_info:
+        description: Redo log groups and archival status (simplified for YashanDB)
+        sql: |
+          SELECT 
+            0 as "group",
+            0 as "thread",
+            0 as "sequence",
+            0 as "size_mb",
+            0 as "members",
+            'UNKNOWN' as "status",
+            'UNKNOWN' as "archived"
+          FROM dual
+        singleRow: false
+      database_file_growth:
+        description: Database file allocation and growth metrics
+        sql: |
+          SELECT 
+            ROUND(SUM(bytes) / 1024 / 1024 / 1024, 2) as "total_allocated_gb",
+            COUNT(*) as "file_count",
+            ROUND(AVG(bytes) / 1024 / 1024, 2) as "avg_file_size_mb",
+            ROUND(MAX(bytes) / 1024 / 1024, 2) as "max_file_size_mb",
+            ROUND(MIN(bytes) / 1024 / 1024, 2) as "min_file_size_mb"
+          FROM dba_data_files
+        singleRow: true
+      critical_parameters:
+        description: Key database configuration parameters (simplified for YashanDB)
+        sql: |
+          SELECT 
+            'parameter' as "parameter",
+            'string' as "type",
+            'current_value' as "current_value",
+            'default_value' as "default_value",
+            'No' as "is_default"
+          FROM dual
+          UNION ALL
+          SELECT 
+            'sga_target' as "parameter",
+            'integer' as "type",
+            '0' as "current_value",
+            '0' as "default_value",
+            'Yes' as "is_default"
+          FROM dual
+        singleRow: false

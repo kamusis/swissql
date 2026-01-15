@@ -1,0 +1,47 @@
+dbType: yashandb
+supportedVersions:
+  min: "23.0.0.0"
+  max: "23.99.99.99.99"
+description: YashanDB ASH sampler collector
+collectors:
+  ash:
+    description: Active Session History sampling (2 layers)
+    layers:
+      active_sessions:
+        description: Active sessions sampled from V_$SESSION
+        order: 0
+        render_hint:
+          display_type: table
+          title: Active Sessions
+        sql: |
+          SELECT
+            SYSDATE as sample_time,
+            sid,
+            "SERIAL#" as serial_number,
+            username,
+            sql_id,
+            status as session_state,
+            wait_class,
+            nvl(wait_event, 'ON CPU') as event
+          FROM SYS.V_$SESSION
+          WHERE type = 'USER'
+            AND status = 'ACTIVE'
+          ORDER BY sid
+          FETCH FIRST 20 ROWS ONLY
+        singleRow: false
+      wait_class_summary:
+        description: Wait class distribution for active sessions
+        order: 1
+        render_hint:
+          display_type: table
+          title: Wait Class Summary
+        sql: |
+          SELECT
+            nvl(wait_class, 'CPU') as wait_class,
+            COUNT(*) as "samples"
+          FROM SYS.V_$SESSION
+          WHERE type = 'USER'
+            AND status = 'ACTIVE'
+          GROUP BY wait_class
+          ORDER BY COUNT(*) DESC
+        singleRow: false

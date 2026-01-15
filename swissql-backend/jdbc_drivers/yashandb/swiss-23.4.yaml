@@ -1,0 +1,40 @@
+dbType: yashandb
+supportedVersions:
+  min: "23.0.0.0"
+  max: "23.99.99.99.99"
+description: Swiss sampler queries for YashanDB 23ai
+collectors:
+  swiss:
+    description: Swiss sampler query set
+    queries:
+      sqltext:
+        description: Get SQL text by SQL ID
+        sql: |
+          SELECT sql_id, sql_text 
+          FROM SYS.V_$SQLTEXT 
+          WHERE sql_id = :sql_id
+        singleRow: false
+        parameters:
+          - sql_id
+      sqlplan:
+        description: Get execution plan by SQL ID (simplified for YashanDB)
+        sql: |
+          SELECT 'Plan not available in YashanDB' as plan_line
+          FROM dual
+          WHERE 1=0
+        singleRow: false
+        parameters:
+          - sql_id
+      locks_exclusive:
+        description: Sessions holding exclusive locks
+        sql: |
+          SELECT
+            sid as lock_sid,
+            lmode,
+            request,
+            TO_CHAR(id1) as lock_lock_id1,
+            TO_CHAR(id2) as lock_lock_id2
+          FROM SYS.V_$LOCK
+          WHERE lmode = 6
+          ORDER BY sid
+        singleRow: false
