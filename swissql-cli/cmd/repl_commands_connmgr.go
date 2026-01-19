@@ -340,20 +340,417 @@ func matchConnmgrFilters(name string, p config.Profile, filters map[string][]str
 	return true
 }
 
-// runConnmgrRemove handles the connmgr remove command (placeholder)
-func runConnmgrRemove(_ *replDispatchContext) (bool, bool) {
-	fmt.Println("connmgr remove command not yet implemented")
+// runConnmgrRemove handles the connmgr remove command
+func runConnmgrRemove(ctx *replDispatchContext) (bool, bool) {
+	args := ctx.MetaArgs
+	if len(args) < 1 {
+		fmt.Println("Error: profile name required")
+		fmt.Println("Usage: connmgr remove <profile-name> [--db_type <name>] [--like] [--force]")
+		return true, false
+	}
+
+	// Parse flags
+	dbType := ""
+	useLike := false
+	force := false
+	profileName := args[0]
+
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--db_type" && i+1 < len(args) {
+			dbType = args[i+1]
+			i++
+		} else if arg == "--like" {
+			useLike = true
+		} else if arg == "--force" {
+			force = true
+		}
+	}
+
+	// Validate: if db_type is provided but profile name is empty, that's an error
+	if strings.TrimSpace(profileName) == "" {
+		fmt.Println("Error: profile name cannot be empty")
+		return true, false
+	}
+
+	// Load profiles
+	profiles, err := config.LoadProfiles()
+	if err != nil {
+		fmt.Printf("Error: failed to load profiles: %v\n", err)
+		return true, false
+	}
+
+	// Find matching profiles
+	var matchedProfiles []string
+	for name, profile := range profiles.Connections {
+		nameMatch := false
+		dbTypeMatch := false
+
+		// Check name match (only if not using --db_type filter)
+		if dbType == "" {
+			if useLike {
+				// Only match if profileName is not empty
+				if profileName != "" {
+					nameMatch = strings.Contains(strings.ToLower(name), strings.ToLower(profileName))
+				}
+			} else {
+				nameMatch = strings.EqualFold(name, profileName)
+			}
+		} else {
+			// When --db_type is provided, profile name is optional or used with --like
+			if useLike {
+				// Only match if profileName is not empty
+				if profileName != "" {
+					nameMatch = strings.Contains(strings.ToLower(name), strings.ToLower(profileName))
+				}
+				// If profileName is empty, don't match by name (only match by db_type)
+			} else {
+				// If not using --like, match any profile name when --db_type is provided
+				nameMatch = true
+			}
+		}
+
+		// Check db_type match if --db_type is provided
+		if dbType != "" {
+			if useLike {
+				dbTypeMatch = strings.Contains(strings.ToLower(profile.DBType), strings.ToLower(dbType))
+			} else {
+				dbTypeMatch = strings.EqualFold(profile.DBType, dbType)
+			}
+		}
+
+		// Include profile if it matches name and (no db_type filter or db_type matches)
+		if nameMatch && (dbType == "" || dbTypeMatch) {
+			matchedProfiles = append(matchedProfiles, name)
+		}
+	}
+
+	if len(matchedProfiles) == 0 {
+		fmt.Printf("Error: no profiles found matching criteria\n")
+		return true, false
+	}
+
+	// If multiple profiles matched and not using --force, list and confirm
+	if len(matchedProfiles) > 1 && !force {
+		fmt.Printf("Found %d matching profiles:\n", len(matchedProfiles))
+		for i, name := range matchedProfiles {
+			profile := profiles.Connections[name]
+			fmt.Printf("  %d. %s (db_type: %s)\n", i+1, name, profile.DBType)
+		}
+
+		response, err := ctx.Line.Prompt("Remove all these profiles? [y/N]: ")
+		if err != nil || !strings.EqualFold(strings.TrimSpace(response), "y") {
+			fmt.Println("Operation cancelled")
+			return true, false
+		}
+	}
+
+	// Load credentials once for batch deletion
+	credentials, err := config.LoadCredentials()
+	if err != nil {
+		fmt.Printf("Warning: failed to load credentials: %v\n", err)
+		credentials = nil
+	}
+
+	// Remove each matched profile
+	for _, name := range matchedProfiles {
+		profile := profiles.Connections[name]
+
+		// Prompt for confirmation for single profile unless --force flag
+		if len(matchedProfiles) == 1 && !force {
+			response, err := ctx.Line.Prompt(fmt.Sprintf("Are you sure you want to remove profile '%s'? [y/N]: ", name))
+			if err != nil || !strings.EqualFold(strings.TrimSpace(response), "y") {
+				fmt.Println("Operation cancelled")
+				return true, false
+			}
+		}
+
+		// Cascade delete: Remove credentials using profile.ID
+		if credentials != nil && profile.ID != "" {
+			if _, exists := credentials.Credentials[profile.ID]; exists {
+				delete(credentials.Credentials, profile.ID)
+			}
+		}
+
+		// Remove profile from connections.json
+		delete(profiles.Connections, name)
+	}
+
+	// Save updated profiles
+	if err := config.SaveProfiles(profiles); err != nil {
+		fmt.Printf("Error: failed to save connections.json: %v\n", err)
+		return true, false
+	}
+
+	// Save updated credentials once (if any were modified)
+	if credentials != nil {
+		if err := config.SaveCredentials(credentials); err != nil {
+			fmt.Printf("Warning: failed to save credentials: %v\n", err)
+		}
+	}
+
+	if len(matchedProfiles) == 1 {
+		fmt.Printf("Profile '%s' removed successfully\n", matchedProfiles[0])
+	} else {
+		fmt.Printf("Removed %d profiles successfully\n", len(matchedProfiles))
+	}
 	return true, false
 }
 
-// runConnmgrShow handles the connmgr show command (placeholder)
-func runConnmgrShow(_ *replDispatchContext) (bool, bool) {
-	fmt.Println("connmgr show command not yet implemented")
+// runConnmgrShow handles the connmgr show command
+func runConnmgrShow(ctx *replDispatchContext) (bool, bool) {
+	args := ctx.MetaArgs
+	if len(args) < 1 {
+		fmt.Println("Error: profile name required")
+		fmt.Println("Usage: connmgr show <profile-name>")
+		return true, false
+	}
+
+	profileName := args[0]
+	if strings.TrimSpace(profileName) == "" {
+		fmt.Println("Error: profile name cannot be empty")
+		return true, false
+	}
+
+	// Load profiles
+	profiles, err := config.LoadProfiles()
+	if err != nil {
+		fmt.Printf("Error: failed to load profiles: %v\n", err)
+		return true, false
+	}
+
+	// Check if profile exists
+	profile, exists := profiles.Connections[profileName]
+	if !exists {
+		fmt.Printf("Error: profile '%s' not found\n", profileName)
+		return true, false
+	}
+
+	// Display profile information
+	fmt.Printf("Profile: %s\n", profileName)
+	fmt.Printf("Database Type: %s\n", profile.DBType)
+	fmt.Printf("DSN: %s\n", config.MaskDsn(profile.DSN))
+	fmt.Printf("JDBC URL: %s\n", profile.URL)
+	fmt.Printf("Save Password: %v\n", profile.SavePassword)
+
+	// Display source information if available
+	if profile.Source.Kind != "" {
+		fmt.Println("Source:")
+		fmt.Printf("  Kind: %s\n", profile.Source.Kind)
+		if profile.Source.Provider != "" {
+			fmt.Printf("  Provider: %s\n", profile.Source.Provider)
+		}
+		if profile.Source.Driver != "" {
+			fmt.Printf("  Driver: %s\n", profile.Source.Driver)
+		}
+		if profile.Source.ConnectionID != "" {
+			fmt.Printf("  Connection ID: %s\n", profile.Source.ConnectionID)
+		}
+	}
+
 	return true, false
 }
 
-// runConnmgrUpdate handles the connmgr update command (placeholder)
-func runConnmgrUpdate(_ *replDispatchContext) (bool, bool) {
-	fmt.Println("connmgr update command not yet implemented")
+// runConnmgrUpdate handles the connmgr update command
+func runConnmgrUpdate(ctx *replDispatchContext) (bool, bool) {
+	args := ctx.MetaArgs
+	if len(args) < 1 {
+		fmt.Println("Error: profile name required")
+		fmt.Println("Usage: connmgr update <profile-name> [--new-name <name>] [--dsn <dsn>] [--db-type <type>]")
+		return true, false
+	}
+
+	profileName := args[0]
+	if strings.TrimSpace(profileName) == "" {
+		fmt.Println("Error: profile name cannot be empty")
+		return true, false
+	}
+
+	// Parse flags
+	var newName, newDSN, newDbType string
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--new-name":
+			if i+1 >= len(args) {
+				fmt.Println("Error: --new-name requires a value")
+				return true, false
+			}
+			newName = args[i+1]
+			i++
+		case "--dsn":
+			if i+1 >= len(args) {
+				fmt.Println("Error: --dsn requires a value")
+				return true, false
+			}
+			newDSN = args[i+1]
+			i++
+		case "--db-type":
+			if i+1 >= len(args) {
+				fmt.Println("Error: --db-type requires a value")
+				return true, false
+			}
+			newDbType = args[i+1]
+			i++
+		}
+	}
+
+	// Validate at least one update parameter is provided
+	if newName == "" && newDSN == "" && newDbType == "" {
+		fmt.Println("Error: at least one update parameter required (--new-name, --dsn, or --db-type)")
+		return true, false
+	}
+
+	// Load profiles
+	profiles, err := config.LoadProfiles()
+	if err != nil {
+		fmt.Printf("Error: failed to load profiles: %v\n", err)
+		return true, false
+	}
+
+	// Check if profile exists
+	profile, exists := profiles.Connections[profileName]
+	if !exists {
+		fmt.Printf("Error: profile '%s' not found\n", profileName)
+		return true, false
+	}
+
+	// Track changes for summary
+	var changes []string
+
+	// Validate and apply --new-name
+	if newName != "" {
+		if strings.TrimSpace(newName) == "" {
+			fmt.Println("Error: new name cannot be empty")
+			return true, false
+		}
+		// Sanitize profile name (consistent with import command)
+		sanitizedName := dbeaver.SanitizeProfileName(newName)
+		if sanitizedName != profileName {
+			if _, exists := profiles.Connections[sanitizedName]; exists {
+				fmt.Printf("Error: profile '%s' already exists\n", sanitizedName)
+				return true, false
+			}
+			// Remove old entry and add new one
+			delete(profiles.Connections, profileName)
+			profiles.Connections[sanitizedName] = profile
+			profileName = sanitizedName
+			changes = append(changes, fmt.Sprintf("Name: %s", sanitizedName))
+		}
+	}
+
+	// Validate and apply --dsn
+	if newDSN != "" {
+		if strings.TrimSpace(newDSN) == "" {
+			fmt.Println("Error: DSN cannot be empty")
+			return true, false
+		}
+		// Validate DSN format
+		if err := config.ValidateDSN(newDSN); err != nil {
+			fmt.Printf("Error: invalid DSN format: %v\n", err)
+			fmt.Println("\nValid DSN examples:")
+			fmt.Println("  - oracle://host:1521/service")
+			fmt.Println("  - oracle://alias?TNS_ADMIN=/path/to/wallet")
+			fmt.Println("  - postgresql://localhost:5432/database")
+			fmt.Println("  - postgres://127.0.0.1:5432/postgres")
+			return true, false
+		}
+		profile.DSN = newDSN
+		// Generate JDBC URL from DSN to keep them in sync
+		profile.URL = config.GenerateJDBCURL(newDSN)
+		changes = append(changes, "DSN: updated")
+	}
+
+	// Validate and apply --db-type
+	if newDbType != "" {
+		normalizedDbType := config.NormalizeDbType(newDbType)
+		if normalizedDbType != profile.DBType {
+			profile.DBType = normalizedDbType
+			changes = append(changes, fmt.Sprintf("Database Type: %s", normalizedDbType))
+		}
+	}
+
+	// Save updated profiles
+	if err := config.SaveProfiles(profiles); err != nil {
+		fmt.Printf("Error: failed to save connections.json: %v\n", err)
+		return true, false
+	}
+
+	// Display success message with summary
+	fmt.Printf("Profile '%s' updated successfully:\n", profileName)
+	for _, change := range changes {
+		fmt.Printf("  - %s\n", change)
+	}
+
+	return true, false
+}
+
+// runConnmgrClearCredential handles the connmgr clear-credential command
+func runConnmgrClearCredential(ctx *replDispatchContext) (bool, bool) {
+	args := ctx.MetaArgs
+	if len(args) < 1 {
+		fmt.Println("Error: profile name required")
+		fmt.Println("Usage: connmgr clear-credential <profile-name>")
+		return true, false
+	}
+
+	profileName := args[0]
+	if strings.TrimSpace(profileName) == "" {
+		fmt.Println("Error: profile name cannot be empty")
+		return true, false
+	}
+
+	// Load profiles
+	profiles, err := config.LoadProfiles()
+	if err != nil {
+		fmt.Printf("Error: failed to load profiles: %v\n", err)
+		return true, false
+	}
+
+	// Check if profile exists
+	profile, exists := profiles.Connections[profileName]
+	if !exists {
+		fmt.Printf("Error: profile '%s' not found\n", profileName)
+		return true, false
+	}
+
+	// Load credentials
+	credentials, err := config.LoadCredentials()
+	if err != nil {
+		fmt.Printf("Error: failed to load credentials: %v\n", err)
+		return true, false
+	}
+
+	// Check if credentials exist for this profile ID
+	if profile.ID == "" {
+		fmt.Printf("No credentials found for profile '%s'\n", profileName)
+		return true, false
+	}
+
+	if _, exists := credentials.Credentials[profile.ID]; !exists {
+		fmt.Printf("No credentials found for profile '%s'\n", profileName)
+		return true, false
+	}
+
+	// Prompt for confirmation
+	response, err := ctx.Line.Prompt(fmt.Sprintf("Are you sure you want to clear credentials for profile '%s'? [y/N]: ", profileName))
+	if err != nil {
+		fmt.Printf("Error: failed to read input: %v\n", err)
+		return true, false
+	}
+	if !strings.EqualFold(strings.TrimSpace(response), "y") {
+		fmt.Println("Operation cancelled")
+		return true, false
+	}
+
+	// Remove credentials
+	delete(credentials.Credentials, profile.ID)
+
+	// Save updated credentials
+	if err := config.SaveCredentials(credentials); err != nil {
+		fmt.Printf("Error: failed to save credentials.json: %v\n", err)
+		return true, false
+	}
+
+	fmt.Printf("Credentials cleared for profile '%s'\n", profileName)
 	return true, false
 }

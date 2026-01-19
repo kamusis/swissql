@@ -617,3 +617,692 @@ func TestRenderImportResult(t *testing.T) {
 		}
 	}
 }
+
+// TestRunConnmgrRemove_MissingProfileName tests remove command with missing profile name
+func TestRunConnmgrRemove_MissingProfileName(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrRemove(&replDispatchContext{
+			MetaArgs: []string{},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "profile name required") {
+		t.Errorf("expected output to contain 'profile name required', got: %q", output)
+	}
+}
+
+// TestRunConnmgrRemove_EmptyProfileName tests remove command with empty profile name
+func TestRunConnmgrRemove_EmptyProfileName(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrRemove(&replDispatchContext{
+			MetaArgs: []string{"   "},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "profile name cannot be empty") {
+		t.Errorf("expected output to contain 'profile name cannot be empty', got: %q", output)
+	}
+}
+
+// TestRunConnmgrRemove_NonExistentProfile tests remove command with non-existent profile
+func TestRunConnmgrRemove_NonExistentProfile(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrRemove(&replDispatchContext{
+			MetaArgs: []string{"non-existent-profile"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "no profiles found matching criteria") {
+		t.Errorf("expected output to contain 'no profiles found matching criteria', got: %q", output)
+	}
+}
+
+// TestRunConnmgrRemove_WithDbType tests remove command with --db_type filter
+func TestRunConnmgrRemove_WithDbType(t *testing.T) {
+	// Setup: create test profiles
+	testProfiles := &config.Profiles{
+		Version: 1,
+		Connections: map[string]config.Profile{
+			"oracle-prod": {
+				ID:     "id1",
+				DBType: "oracle",
+				DSN:    "oracle://localhost:1521/orcl",
+				URL:    "jdbc:oracle:thin:@localhost:1521:orcl",
+			},
+			"postgres-dev": {
+				ID:     "id2",
+				DBType: "postgresql",
+				DSN:    "postgresql://localhost:5432/dev",
+				URL:    "jdbc:postgresql://localhost:5432/dev",
+			},
+			"oracle-test": {
+				ID:     "id3",
+				DBType: "oracle",
+				DSN:    "oracle://localhost:1521/test",
+				URL:    "jdbc:oracle:thin:@localhost:1521:test",
+			},
+		},
+	}
+
+	// Save test profiles
+	if err := config.SaveProfiles(testProfiles); err != nil {
+		t.Fatalf("failed to save test profiles: %v", err)
+	}
+	defer func() {
+		// Cleanup: remove test profiles
+		config.SaveProfiles(&config.Profiles{Version: 1, Connections: make(map[string]config.Profile)})
+	}()
+
+	// Test: remove all oracle profiles with --force
+	output := captureOutput(func() {
+		handled, _ := runConnmgrRemove(&replDispatchContext{
+			MetaArgs: []string{"oracle-prod", "--db_type", "oracle", "--force"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "Removed 2 profiles successfully") {
+		t.Errorf("expected output to contain 'Removed 2 profiles successfully', got: %q", output)
+	}
+
+	// Verify: only postgres profile remains
+	profiles, _ := config.LoadProfiles()
+	if len(profiles.Connections) != 1 {
+		t.Errorf("expected 1 profile remaining, got %d", len(profiles.Connections))
+	}
+	if _, exists := profiles.Connections["postgres-dev"]; !exists {
+		t.Error("expected postgres-dev profile to still exist")
+	}
+}
+
+// TestRunConnmgrRemove_WithLike tests remove command with --like flag for fuzzy matching
+func TestRunConnmgrRemove_WithLike(t *testing.T) {
+	// Setup: create test profiles
+	testProfiles := &config.Profiles{
+		Version: 1,
+		Connections: map[string]config.Profile{
+			"prod-db": {
+				ID:     "id1",
+				DBType: "oracle",
+				DSN:    "oracle://localhost:1521/orcl",
+				URL:    "jdbc:oracle:thin:@localhost:1521:orcl",
+			},
+			"prod-cache": {
+				ID:     "id2",
+				DBType: "postgresql",
+				DSN:    "postgresql://localhost:5432/cache",
+				URL:    "jdbc:postgresql://localhost:5432/cache",
+			},
+			"dev-db": {
+				ID:     "id3",
+				DBType: "oracle",
+				DSN:    "oracle://localhost:1521/dev",
+				URL:    "jdbc:oracle:thin:@localhost:1521:dev",
+			},
+		},
+	}
+
+	// Save test profiles
+	if err := config.SaveProfiles(testProfiles); err != nil {
+		t.Fatalf("failed to save test profiles: %v", err)
+	}
+	defer func() {
+		// Cleanup: remove test profiles
+		config.SaveProfiles(&config.Profiles{Version: 1, Connections: make(map[string]config.Profile)})
+	}()
+
+	// Test: remove all profiles matching "prod" with --force
+	output := captureOutput(func() {
+		handled, _ := runConnmgrRemove(&replDispatchContext{
+			MetaArgs: []string{"prod", "--like", "--force"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "Removed 2 profiles successfully") {
+		t.Errorf("expected output to contain 'Removed 2 profiles successfully', got: %q", output)
+	}
+
+	// Verify: only dev-db profile remains
+	profiles, _ := config.LoadProfiles()
+	if len(profiles.Connections) != 1 {
+		t.Errorf("expected 1 profile remaining, got %d", len(profiles.Connections))
+	}
+	if _, exists := profiles.Connections["dev-db"]; !exists {
+		t.Error("expected dev-db profile to still exist")
+	}
+}
+
+// TestRunConnmgrRemove_WithDbTypeAndLike tests remove command with both --db_type and --like flags
+func TestRunConnmgrRemove_WithDbTypeAndLike(t *testing.T) {
+	// Setup: create test profiles
+	testProfiles := &config.Profiles{
+		Version: 1,
+		Connections: map[string]config.Profile{
+			"oracle-prod": {
+				ID:     "id1",
+				DBType: "oracle",
+				DSN:    "oracle://localhost:1521/orcl",
+				URL:    "jdbc:oracle:thin:@localhost:1521:orcl",
+			},
+			"postgres-prod": {
+				ID:     "id2",
+				DBType: "postgresql",
+				DSN:    "postgresql://localhost:5432/prod",
+				URL:    "jdbc:postgresql://localhost:5432/prod",
+			},
+			"oracle-dev": {
+				ID:     "id3",
+				DBType: "oracle",
+				DSN:    "oracle://localhost:1521/dev",
+				URL:    "jdbc:oracle:thin:@localhost:1521:dev",
+			},
+		},
+	}
+
+	// Save test profiles
+	if err := config.SaveProfiles(testProfiles); err != nil {
+		t.Fatalf("failed to save test profiles: %v", err)
+	}
+	defer func() {
+		// Cleanup: remove test profiles
+		config.SaveProfiles(&config.Profiles{Version: 1, Connections: make(map[string]config.Profile)})
+	}()
+
+	// Test: remove oracle profiles matching "prod" with --force
+	output := captureOutput(func() {
+		handled, _ := runConnmgrRemove(&replDispatchContext{
+			MetaArgs: []string{"prod", "--db_type", "oracle", "--like", "--force"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "Profile 'oracle-prod' removed successfully") {
+		t.Errorf("expected output to contain 'Profile 'oracle-prod' removed successfully', got: %q", output)
+	}
+
+	// Verify: only postgres-prod and oracle-dev remain
+	profiles, _ := config.LoadProfiles()
+	if len(profiles.Connections) != 2 {
+		t.Errorf("expected 2 profiles remaining, got %d", len(profiles.Connections))
+	}
+	if _, exists := profiles.Connections["postgres-prod"]; !exists {
+		t.Error("expected postgres-prod profile to still exist")
+	}
+	if _, exists := profiles.Connections["oracle-dev"]; !exists {
+		t.Error("expected oracle-dev profile to still exist")
+	}
+}
+
+// TestRunConnmgrRemove_MultipleMatchesWithoutForce tests remove command with multiple matches without --force
+func TestRunConnmgrRemove_MultipleMatchesWithoutForce(t *testing.T) {
+	// Setup: create test profiles
+	testProfiles := &config.Profiles{
+		Version: 1,
+		Connections: map[string]config.Profile{
+			"prod-db-1": {
+				ID:     "id1",
+				DBType: "oracle",
+				DSN:    "oracle://localhost:1521/orcl1",
+				URL:    "jdbc:oracle:thin:@localhost:1521:orcl1",
+			},
+			"prod-db-2": {
+				ID:     "id2",
+				DBType: "oracle",
+				DSN:    "oracle://localhost:1521/orcl2",
+				URL:    "jdbc:oracle:thin:@localhost:1521:orcl2",
+			},
+		},
+	}
+
+	// Save test profiles
+	if err := config.SaveProfiles(testProfiles); err != nil {
+		t.Fatalf("failed to save test profiles: %v", err)
+	}
+	defer func() {
+		// Cleanup: remove test profiles
+		config.SaveProfiles(&config.Profiles{Version: 1, Connections: make(map[string]config.Profile)})
+	}()
+
+	// Test: remove profiles matching "prod" with --force (to test listing behavior)
+	output := captureOutput(func() {
+		handled, _ := runConnmgrRemove(&replDispatchContext{
+			MetaArgs: []string{"prod", "--like", "--force"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "Removed 2 profiles successfully") {
+		t.Errorf("expected output to contain 'Removed 2 profiles successfully', got: %q", output)
+	}
+
+	// Verify: all profiles are removed
+	profiles, _ := config.LoadProfiles()
+	if len(profiles.Connections) != 0 {
+		t.Errorf("expected 0 profiles remaining, got %d", len(profiles.Connections))
+	}
+}
+
+// TestRunConnmgrRemove_CaseInsensitive tests remove command with case-insensitive matching
+func TestRunConnmgrRemove_CaseInsensitive(t *testing.T) {
+	// Setup: create test profiles
+	testProfiles := &config.Profiles{
+		Version: 1,
+		Connections: map[string]config.Profile{
+			"Oracle-Prod": {
+				ID:     "id1",
+				DBType: "oracle",
+				DSN:    "oracle://localhost:1521/orcl",
+				URL:    "jdbc:oracle:thin:@localhost:1521:orcl",
+			},
+		},
+	}
+
+	// Save test profiles
+	if err := config.SaveProfiles(testProfiles); err != nil {
+		t.Fatalf("failed to save test profiles: %v", err)
+	}
+	defer func() {
+		// Cleanup: remove test profiles
+		config.SaveProfiles(&config.Profiles{Version: 1, Connections: make(map[string]config.Profile)})
+	}()
+
+	// Test: remove profile with different case
+	output := captureOutput(func() {
+		handled, _ := runConnmgrRemove(&replDispatchContext{
+			MetaArgs: []string{"oracle-prod", "--force"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "Profile 'Oracle-Prod' removed successfully") {
+		t.Errorf("expected output to contain 'Profile 'Oracle-Prod' removed successfully', got: %q", output)
+	}
+
+	// Verify: profile is removed
+	profiles, _ := config.LoadProfiles()
+	if len(profiles.Connections) != 0 {
+		t.Errorf("expected 0 profiles remaining, got %d", len(profiles.Connections))
+	}
+}
+
+// TestRunConnmgrShow_MissingProfileName tests show command with missing profile name
+func TestRunConnmgrShow_MissingProfileName(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrShow(&replDispatchContext{
+			MetaArgs: []string{},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "profile name required") {
+		t.Errorf("expected output to contain 'profile name required', got: %q", output)
+	}
+}
+
+// TestRunConnmgrShow_EmptyProfileName tests show command with empty profile name
+func TestRunConnmgrShow_EmptyProfileName(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrShow(&replDispatchContext{
+			MetaArgs: []string{"   "},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "profile name cannot be empty") {
+		t.Errorf("expected output to contain 'profile name cannot be empty', got: %q", output)
+	}
+}
+
+// TestRunConnmgrShow_NonExistentProfile tests show command with non-existent profile
+func TestRunConnmgrShow_NonExistentProfile(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrShow(&replDispatchContext{
+			MetaArgs: []string{"non-existent-profile"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "profile 'non-existent-profile' not found") {
+		t.Errorf("expected output to contain 'profile not found', got: %q", output)
+	}
+}
+
+// TestRunConnmgrUpdate_MissingProfileName tests update command with missing profile name
+func TestRunConnmgrUpdate_MissingProfileName(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrUpdate(&replDispatchContext{
+			MetaArgs: []string{},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "profile name required") {
+		t.Errorf("expected output to contain 'profile name required', got: %q", output)
+	}
+}
+
+// TestRunConnmgrUpdate_NoUpdateParameters tests update command with no update parameters
+func TestRunConnmgrUpdate_NoUpdateParameters(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrUpdate(&replDispatchContext{
+			MetaArgs: []string{"test-profile"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "at least one update parameter required") {
+		t.Errorf("expected output to contain 'at least one update parameter required', got: %q", output)
+	}
+}
+
+// TestRunConnmgrUpdate_NonExistentProfile tests update command with non-existent profile
+func TestRunConnmgrUpdate_NonExistentProfile(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrUpdate(&replDispatchContext{
+			MetaArgs: []string{"non-existent-profile", "--new-name", "new-name"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "profile 'non-existent-profile' not found") {
+		t.Errorf("expected output to contain 'profile not found', got: %q", output)
+	}
+}
+
+// TestRunConnmgrUpdate_EmptyNewName tests update command with empty new name
+func TestRunConnmgrUpdate_EmptyNewName(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrUpdate(&replDispatchContext{
+			MetaArgs: []string{"test-profile", "--new-name", "   "},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "new name cannot be empty") {
+		t.Errorf("expected output to contain 'new name cannot be empty', got: %q", output)
+	}
+}
+
+// TestRunConnmgrUpdate_EmptyDSN tests update command with empty DSN
+func TestRunConnmgrUpdate_EmptyDSN(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrUpdate(&replDispatchContext{
+			MetaArgs: []string{"test-profile", "--dsn", "   "},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "DSN cannot be empty") {
+		t.Errorf("expected output to contain 'DSN cannot be empty', got: %q", output)
+	}
+}
+
+// TestRunConnmgrClearCredential_MissingProfileName tests clear-credential command with missing profile name
+func TestRunConnmgrClearCredential_MissingProfileName(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrClearCredential(&replDispatchContext{
+			MetaArgs: []string{},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "profile name required") {
+		t.Errorf("expected output to contain 'profile name required', got: %q", output)
+	}
+}
+
+// TestRunConnmgrClearCredential_EmptyProfileName tests clear-credential command with empty profile name
+func TestRunConnmgrClearCredential_EmptyProfileName(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrClearCredential(&replDispatchContext{
+			MetaArgs: []string{"   "},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "profile name cannot be empty") {
+		t.Errorf("expected output to contain 'profile name cannot be empty', got: %q", output)
+	}
+}
+
+// TestRunConnmgrClearCredential_NonExistentProfile tests clear-credential command with non-existent profile
+func TestRunConnmgrClearCredential_NonExistentProfile(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrClearCredential(&replDispatchContext{
+			MetaArgs: []string{"non-existent-profile"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	if !strings.Contains(output, "profile 'non-existent-profile' not found") {
+		t.Errorf("expected output to contain 'profile not found', got: %q", output)
+	}
+}
+
+// TestConfigValidateDSN tests the ValidateDSN function
+func TestConfigValidateDSN(t *testing.T) {
+	tests := []struct {
+		name    string
+		dsn     string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "valid oracle DSN",
+			dsn:     "oracle://host:1521/service",
+			wantErr: false,
+		},
+		{
+			name:    "valid oracle DSN with TNS alias",
+			dsn:     "oracle://alias?TNS_ADMIN=/path/to/wallet",
+			wantErr: false,
+		},
+		{
+			name:    "valid postgresql DSN",
+			dsn:     "postgresql://localhost:5432/database",
+			wantErr: false,
+		},
+		{
+			name:    "valid postgres DSN",
+			dsn:     "postgres://127.0.0.1:5432/postgres",
+			wantErr: false,
+		},
+		{
+			name:    "invalid - empty string",
+			dsn:     "",
+			wantErr: true,
+			errMsg:  "cannot be empty",
+		},
+		{
+			name:    "invalid - missing ://",
+			dsn:     "invalid-dsn",
+			wantErr: true,
+			errMsg:  "missing '://' separator",
+		},
+		{
+			name:    "invalid - missing host",
+			dsn:     "oracle://",
+			wantErr: true,
+			errMsg:  "missing host",
+		},
+		{
+			name:    "invalid - missing protocol",
+			dsn:     "://host:5432/db",
+			wantErr: true,
+			errMsg:  "missing protocol",
+		},
+		{
+			name:    "invalid - host starts with special character",
+			dsn:     "oracle://@host:5432/db",
+			wantErr: true,
+			errMsg:  "host must start with alphanumeric",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := config.ValidateDSN(tt.dsn)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateDSN(%q) error = %v, wantErr %v", tt.dsn, err, tt.wantErr)
+			}
+			if tt.wantErr && err != nil && !strings.Contains(err.Error(), tt.errMsg) {
+				t.Errorf("expected error to contain %q, got: %q", tt.errMsg, err.Error())
+			}
+		})
+	}
+}
+
+// TestConfigGenerateJDBCURL tests the GenerateJDBCURL function
+func TestConfigGenerateJDBCURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		dsn      string
+		expected string
+	}{
+		{
+			name:     "oracle DSN",
+			dsn:      "oracle://host:1521/service",
+			expected: "jdbc:oracle:thin:@host:1521/service",
+		},
+		{
+			name:     "oracle DSN with TNS alias",
+			dsn:      "oracle://alias?TNS_ADMIN=/path/to/wallet",
+			expected: "jdbc:oracle:thin:@alias?TNS_ADMIN=/path/to/wallet",
+		},
+		{
+			name:     "postgresql DSN",
+			dsn:      "postgresql://localhost:5432/database",
+			expected: "jdbc:postgresql://localhost:5432/database",
+		},
+		{
+			name:     "postgres DSN",
+			dsn:      "postgres://127.0.0.1:5432/postgres",
+			expected: "jdbc:postgresql://127.0.0.1:5432/postgres",
+		},
+		{
+			name:     "empty DSN",
+			dsn:      "",
+			expected: "",
+		},
+		{
+			name:     "invalid DSN - missing ://",
+			dsn:      "invalid-dsn",
+			expected: "",
+		},
+		{
+			name:     "other database type",
+			dsn:      "mysql://localhost:3306/database",
+			expected: "jdbc:mysql://localhost:3306/database",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := config.GenerateJDBCURL(tt.dsn)
+			if got != tt.expected {
+				t.Errorf("GenerateJDBCURL(%q) = %q, want %q", tt.dsn, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestDbeaverSanitizeProfileName tests the SanitizeProfileName function
+func TestDbeaverSanitizeProfileName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "valid name",
+			input:    "my-profile",
+			expected: "my-profile",
+		},
+		{
+			name:     "name with spaces",
+			input:    "my profile",
+			expected: "my_profile",
+		},
+		{
+			name:     "name with slashes",
+			input:    "my/profile",
+			expected: "my_profile",
+		},
+		{
+			name:     "name with @ symbol",
+			input:    "name@host",
+			expected: "name_host",
+		},
+		{
+			name:     "name with special characters",
+			input:    "my#profile$name",
+			expected: "my_profile_name",
+		},
+		{
+			name:     "name with dots",
+			input:    "my.profile.name",
+			expected: "my_profile_name",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "only special characters",
+			input:    "@#$%",
+			expected: "____",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := dbeaver.SanitizeProfileName(tt.input)
+			if got != tt.expected {
+				t.Errorf("SanitizeProfileName(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
