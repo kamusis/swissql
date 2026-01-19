@@ -23,8 +23,8 @@ import java.util.Map;
 /**
  * Service for generating SQL from natural-language prompts via an OpenAI-compatible API.
  *
- * This implementation targets the Portkey OpenAI-compatible gateway by default and relies solely
- * on HTTP requests (no vendor SDK) to avoid locking into any specific LLM provider library.
+ * Supports multiple AI providers: portkey, openai, deepseek.
+ * Uses HTTP requests (no vendor SDK) to avoid locking into any specific LLM provider library.
  */
 @Service
 public class AiSqlGenerateService {
@@ -32,6 +32,8 @@ public class AiSqlGenerateService {
     private static final Logger log = LoggerFactory.getLogger(AiSqlGenerateService.class);
 
     private static final String DEFAULT_PORTKEY_BASE_URL = "https://api.portkey.ai";
+    private static final String DEFAULT_OPENAI_BASE_URL = "https://api.openai.com";
+    private static final String DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com";
     private static final int DEFAULT_TIMEOUT_MS = 30000;
 
     private final ObjectMapper objectMapper;
@@ -55,45 +57,31 @@ public class AiSqlGenerateService {
     }
 
     /**
-     * Log whether AI generation is enabled and which profile settings are active.
+     * Log whether AI generation is enabled and which provider settings are active.
      *
-     * This intentionally does not log any secrets (e.g., Portkey API key).
+     * This intentionally does not log any secrets (e.g., API keys).
      */
     @PostConstruct
     public void logAiConfigStatus() {
         PortkeyConfig config = PortkeyConfig.fromEnvironment(environment);
 
-        String profile = null;
-        if (environment != null) {
-            profile = environment.getProperty("swissql.ai.portkey.profile");
-            if (profile == null || profile.isBlank()) {
-                profile = environment.getProperty("PORTKEY_PROFILE");
-            }
-        }
-        if (profile != null) {
-            profile = profile.trim();
-        }
         boolean hasApiKey = config.apiKey() != null && !config.apiKey().isBlank();
-        boolean hasProvider = config.provider() != null && !config.provider().isBlank();
         boolean hasModel = config.model() != null && !config.model().isBlank();
 
         if (config.isEnabled()) {
             log.info(
-                    "AI SQL generation is ENABLED (gateway_base_url={}, profile={}, model={}, provider_configured={})",
+                    "AI SQL generation is ENABLED (provider={}, base_url={}, model={})",
+                    config.providerType(),
                     config.baseUrl(),
-                    profile,
-                    config.model(),
-                    true
+                    config.model()
             );
             return;
         }
 
         log.warn(
-                "AI SQL generation is DISABLED (gateway_base_url={}, profile={}, api_key_configured={}, provider_configured={}, model_configured={})",
-                config.baseUrl(),
-                profile,
+                "AI SQL generation is DISABLED (provider={}, api_key_configured={}, model_configured={})",
+                config.providerType(),
                 hasApiKey,
-                hasProvider,
                 hasModel
         );
     }
@@ -134,20 +122,28 @@ public class AiSqlGenerateService {
             HttpRequest.Builder httpRequestBuilder = HttpRequest.newBuilder()
                     .uri(uri)
                     .timeout(Duration.ofMillis(config.timeoutMs()))
-                    .header("Content-Type", "application/json")
-                    .header("x-portkey-api-key", config.apiKey())
-                    .header("x-portkey-virtual-key", config.provider())
-                    .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8));
+                    .header("Content-Type", "application/json");
+
+            if ("portkey".equals(config.providerType())) {
+                httpRequestBuilder
+                        .header("x-portkey-api-key", config.apiKey())
+                        .header("x-portkey-virtual-key", config.provider());
+            } else {
+                httpRequestBuilder
+                        .header("Authorization", "Bearer " + config.apiKey());
+            }
+
+            httpRequestBuilder.POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8));
 
             HttpResponse<String> response = httpClient.send(httpRequestBuilder.build(), HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() >= 400) {
                 log.warn(
-                        "AI gateway request failed (status_code={}, gateway_base_url={}, model={}, virtual_key_configured={})",
+                        "AI gateway request failed (status_code={}, provider={}, base_url={}, model={})",
                         response.statusCode(),
+                        config.providerType(),
                         config.baseUrl(),
-                        config.model(),
-                        config.provider() != null && !config.provider().isBlank()
+                        config.model()
                 );
                 return GeneratedSqlResult.error("AI gateway error: HTTP " + response.statusCode() + " - " + response.body());
             }
@@ -311,16 +307,76 @@ public class AiSqlGenerateService {
     }
 
     /**
-     * Immutable Portkey configuration resolved from environment variables.
+     * Immutable AI provider configuration resolved from environment variables.
+     * Supports: portkey, openai, deepseek
      */
     private record PortkeyConfig(
             String baseUrl,
             String apiKey,
             String provider,
             String model,
-            int timeoutMs
+            int timeoutMs,
+            String providerType
     ) {
         static PortkeyConfig fromEnvironment(Environment environment) {
+            String providerType = getTrimmed(environment, "swissql.ai.provider", null);
+            if (providerType == null || providerType.isBlank()) {
+                providerType = "portkey";
+            }
+            providerType = providerType.trim().toLowerCase(Locale.ROOT);
+
+            if ("openai".equals(providerType)) {
+                return loadOpenAiConfig(environment);
+            } else if ("deepseek".equals(providerType)) {
+                return loadDeepSeekConfig(environment);
+            } else {
+                return loadPortkeyConfig(environment);
+            }
+        }
+
+        private static PortkeyConfig loadOpenAiConfig(Environment environment) {
+            String baseUrl = getTrimmed(environment, "swissql.ai.openai.base-url", null);
+            if (baseUrl == null || baseUrl.isBlank()) {
+                baseUrl = DEFAULT_OPENAI_BASE_URL;
+            }
+
+            String apiKey = getTrimmed(environment, "swissql.ai.openai.api-key", "OPENAI_API_KEY");
+            String model = getTrimmed(environment, "swissql.ai.openai.model", "OPENAI_MODEL");
+
+            int timeoutMs = DEFAULT_TIMEOUT_MS;
+            String timeoutRaw = getTrimmed(environment, "swissql.ai.openai.timeout-ms", null);
+            if (timeoutRaw != null && !timeoutRaw.isBlank()) {
+                try {
+                    timeoutMs = Integer.parseInt(timeoutRaw);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+
+            return new PortkeyConfig(baseUrl, apiKey, null, model, timeoutMs, "openai");
+        }
+
+        private static PortkeyConfig loadDeepSeekConfig(Environment environment) {
+            String baseUrl = getTrimmed(environment, "swissql.ai.deepseek.base-url", null);
+            if (baseUrl == null || baseUrl.isBlank()) {
+                baseUrl = DEFAULT_DEEPSEEK_BASE_URL;
+            }
+
+            String apiKey = getTrimmed(environment, "swissql.ai.deepseek.api-key", "DEEPSEEK_API_KEY");
+            String model = getTrimmed(environment, "swissql.ai.deepseek.model", "DEEPSEEK_MODEL");
+
+            int timeoutMs = DEFAULT_TIMEOUT_MS;
+            String timeoutRaw = getTrimmed(environment, "swissql.ai.deepseek.timeout-ms", null);
+            if (timeoutRaw != null && !timeoutRaw.isBlank()) {
+                try {
+                    timeoutMs = Integer.parseInt(timeoutRaw);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+
+            return new PortkeyConfig(baseUrl, apiKey, null, model, timeoutMs, "deepseek");
+        }
+
+        private static PortkeyConfig loadPortkeyConfig(Environment environment) {
             String profile = getTrimmed(environment, "swissql.ai.portkey.profile", "PORTKEY_PROFILE");
             String apiKey = getTrimmed(environment, "swissql.ai.portkey.api-key", "PORTKEY_API_KEY");
 
@@ -338,25 +394,40 @@ public class AiSqlGenerateService {
                 try {
                     timeoutMs = Integer.parseInt(timeoutRaw);
                 } catch (NumberFormatException ignored) {
-                    // Keep default
                 }
             }
 
-            return new PortkeyConfig(resolvedBaseUrl, apiKey, resolvedProvider, resolvedModel, timeoutMs);
+            return new PortkeyConfig(resolvedBaseUrl, apiKey, resolvedProvider, resolvedModel, timeoutMs, "portkey");
         }
 
         boolean isEnabled() {
-            return apiKey != null && !apiKey.isBlank()
-                    && provider != null && !provider.isBlank()
-                    && model != null && !model.isBlank();
+            if ("portkey".equals(providerType)) {
+                return apiKey != null && !apiKey.isBlank()
+                        && provider != null && !provider.isBlank()
+                        && model != null && !model.isBlank();
+            } else {
+                return apiKey != null && !apiKey.isBlank()
+                        && model != null && !model.isBlank();
+            }
         }
 
         List<String> getDisabledWarnings() {
-            return List.of(
-                    "AI generation is disabled - missing Portkey configuration",
-                    "Required env: PORTKEY_API_KEY, PORTKEY_VIRTUAL_KEY(_<PROFILE>), PORTKEY_MODEL(_<PROFILE>)",
-                    "Optional env: PORTKEY_PROFILE, PORTKEY_BASE_URL(_<PROFILE>), PORTKEY_TIMEOUT_MS"
-            );
+            if ("portkey".equals(providerType)) {
+                return List.of(
+                        "AI generation is disabled - missing Portkey configuration",
+                        "Required env: PORTKEY_API_KEY, PORTKEY_VIRTUAL_KEY(_<PROFILE>), PORTKEY_MODEL(_<PROFILE>)",
+                        "Optional env: PORTKEY_PROFILE, PORTKEY_BASE_URL(_<PROFILE>), PORTKEY_TIMEOUT_MS"
+                );
+            } else {
+                String providerName = providerType.substring(0, 1).toUpperCase() + providerType.substring(1);
+                String envPrefix = providerType.toUpperCase();
+                return List.of(
+                        "AI generation is disabled - missing " + providerName + " configuration",
+                        "Required env: swissql.ai." + providerType + ".api-key or " + envPrefix + "_API_KEY",
+                        "Required env: swissql.ai." + providerType + ".model or " + envPrefix + "_MODEL",
+                        "Optional env: swissql.ai." + providerType + ".base-url, swissql.ai." + providerType + ".timeout-ms"
+                );
+            }
         }
 
         private static String resolveProfileValue(Environment environment, String propKey, String envKey, String profile) {

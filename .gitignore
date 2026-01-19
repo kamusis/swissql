@@ -58,6 +58,7 @@ Thumbs.db
 .github/agents/
 .github/skills/
 .github/copilot-instructions.md
+.qoder/
 
 # JDBC drivers
 *.jar
