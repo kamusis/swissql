@@ -467,9 +467,7 @@ func runConnmgrRemove(ctx *replDispatchContext) (bool, bool) {
 
 		// Cascade delete: Remove credentials using profile.ID
 		if credentials != nil && profile.ID != "" {
-			if _, exists := credentials.Credentials[profile.ID]; exists {
-				delete(credentials.Credentials, profile.ID)
-			}
+			delete(credentials.Credentials, profile.ID)
 		}
 
 		// Remove profile from connections.json
