@@ -32,8 +32,6 @@ public class AiSqlGenerateService {
     private static final Logger log = LoggerFactory.getLogger(AiSqlGenerateService.class);
 
     private static final String DEFAULT_PORTKEY_BASE_URL = "https://api.portkey.ai";
-    private static final String DEFAULT_OPENAI_BASE_URL = "https://api.openai.com";
-    private static final String DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com";
     private static final int DEFAULT_TIMEOUT_MS = 30000;
 
     private final ObjectMapper objectMapper;
@@ -63,7 +61,7 @@ public class AiSqlGenerateService {
      */
     @PostConstruct
     public void logAiConfigStatus() {
-        PortkeyConfig config = PortkeyConfig.fromEnvironment(environment);
+        AiConfig config = AiConfig.fromEnvironment(environment);
 
         boolean hasApiKey = config.apiKey() != null && !config.apiKey().isBlank();
         boolean hasModel = config.model() != null && !config.model().isBlank();
@@ -93,7 +91,7 @@ public class AiSqlGenerateService {
      * @return generated SQL as a string (may be empty if configuration is missing)
      */
     public GeneratedSqlResult generate(AiGenerateRequest request) {
-        PortkeyConfig config = PortkeyConfig.fromEnvironment(environment);
+        AiConfig config = AiConfig.fromEnvironment(environment);
         if (!config.isEnabled()) {
             return GeneratedSqlResult.disabled(config.getDisabledWarnings());
         }
@@ -308,9 +306,9 @@ public class AiSqlGenerateService {
 
     /**
      * Immutable AI provider configuration resolved from environment variables.
-     * Supports: portkey, openai, deepseek
+     * Supports: portkey, openai, deepseek, and other OpenAI-compatible providers.
      */
-    private record PortkeyConfig(
+    private record AiConfig(
             String baseUrl,
             String apiKey,
             String provider,
@@ -318,33 +316,27 @@ public class AiSqlGenerateService {
             int timeoutMs,
             String providerType
     ) {
-        static PortkeyConfig fromEnvironment(Environment environment) {
+        static AiConfig fromEnvironment(Environment environment) {
             String providerType = getTrimmed(environment, "swissql.ai.provider", null);
             if (providerType == null || providerType.isBlank()) {
                 providerType = "portkey";
             }
             providerType = providerType.trim().toLowerCase(Locale.ROOT);
 
-            if ("openai".equals(providerType)) {
-                return loadOpenAiConfig(environment);
-            } else if ("deepseek".equals(providerType)) {
-                return loadDeepSeekConfig(environment);
-            } else {
+            if ("portkey".equals(providerType)) {
                 return loadPortkeyConfig(environment);
             }
+
+            return loadProviderConfig(environment, providerType);
         }
 
-        private static PortkeyConfig loadOpenAiConfig(Environment environment) {
-            String baseUrl = getTrimmed(environment, "swissql.ai.openai.base-url", null);
-            if (baseUrl == null || baseUrl.isBlank()) {
-                baseUrl = DEFAULT_OPENAI_BASE_URL;
-            }
-
-            String apiKey = getTrimmed(environment, "swissql.ai.openai.api-key", "OPENAI_API_KEY");
-            String model = getTrimmed(environment, "swissql.ai.openai.model", "OPENAI_MODEL");
+        private static AiConfig loadProviderConfig(Environment environment, String providerType) {
+            String baseUrl = getTrimmed(environment, "swissql.ai." + providerType + ".base-url", null);
+            String apiKey = getTrimmed(environment, "swissql.ai." + providerType + ".api-key", providerType.toUpperCase() + "_API_KEY");
+            String model = getTrimmed(environment, "swissql.ai." + providerType + ".model", providerType.toUpperCase() + "_MODEL");
 
             int timeoutMs = DEFAULT_TIMEOUT_MS;
-            String timeoutRaw = getTrimmed(environment, "swissql.ai.openai.timeout-ms", null);
+            String timeoutRaw = getTrimmed(environment, "swissql.ai." + providerType + ".timeout-ms", null);
             if (timeoutRaw != null && !timeoutRaw.isBlank()) {
                 try {
                     timeoutMs = Integer.parseInt(timeoutRaw);
@@ -352,31 +344,10 @@ public class AiSqlGenerateService {
                 }
             }
 
-            return new PortkeyConfig(baseUrl, apiKey, null, model, timeoutMs, "openai");
+            return new AiConfig(baseUrl, apiKey, null, model, timeoutMs, providerType);
         }
 
-        private static PortkeyConfig loadDeepSeekConfig(Environment environment) {
-            String baseUrl = getTrimmed(environment, "swissql.ai.deepseek.base-url", null);
-            if (baseUrl == null || baseUrl.isBlank()) {
-                baseUrl = DEFAULT_DEEPSEEK_BASE_URL;
-            }
-
-            String apiKey = getTrimmed(environment, "swissql.ai.deepseek.api-key", "DEEPSEEK_API_KEY");
-            String model = getTrimmed(environment, "swissql.ai.deepseek.model", "DEEPSEEK_MODEL");
-
-            int timeoutMs = DEFAULT_TIMEOUT_MS;
-            String timeoutRaw = getTrimmed(environment, "swissql.ai.deepseek.timeout-ms", null);
-            if (timeoutRaw != null && !timeoutRaw.isBlank()) {
-                try {
-                    timeoutMs = Integer.parseInt(timeoutRaw);
-                } catch (NumberFormatException ignored) {
-                }
-            }
-
-            return new PortkeyConfig(baseUrl, apiKey, null, model, timeoutMs, "deepseek");
-        }
-
-        private static PortkeyConfig loadPortkeyConfig(Environment environment) {
+        private static AiConfig loadPortkeyConfig(Environment environment) {
             String profile = getTrimmed(environment, "swissql.ai.portkey.profile", "PORTKEY_PROFILE");
             String apiKey = getTrimmed(environment, "swissql.ai.portkey.api-key", "PORTKEY_API_KEY");
 
@@ -397,18 +368,19 @@ public class AiSqlGenerateService {
                 }
             }
 
-            return new PortkeyConfig(resolvedBaseUrl, apiKey, resolvedProvider, resolvedModel, timeoutMs, "portkey");
+            return new AiConfig(resolvedBaseUrl, apiKey, resolvedProvider, resolvedModel, timeoutMs, "portkey");
         }
 
         boolean isEnabled() {
-            if ("portkey".equals(providerType)) {
-                return apiKey != null && !apiKey.isBlank()
-                        && provider != null && !provider.isBlank()
-                        && model != null && !model.isBlank();
-            } else {
-                return apiKey != null && !apiKey.isBlank()
-                        && model != null && !model.isBlank();
+            boolean baseEnabled = apiKey != null && !apiKey.isBlank()
+                    && model != null && !model.isBlank();
+            if (!baseEnabled) {
+                return false;
             }
+            if ("portkey".equals(providerType)) {
+                return provider != null && !provider.isBlank();
+            }
+            return true;
         }
 
         List<String> getDisabledWarnings() {
