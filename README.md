@@ -50,22 +50,16 @@ swissql connect "oracle://user:password@host:port/serviceName"
 
 ## Advanced usage
 
-### DBeaver Project Import
+### Connection Management (connmgr)
 
-SwissQL can import connection profiles from DBeaver `.dbp` project files:
+SwissQL provides a unified `connmgr` command system for managing database connection profiles in the REPL:
 
 ```bash
-# Import all connections from a DBeaver project
-swissql import-dbeaver-project --dbp /path/to/project.dbp
+# Import DBeaver project connections
+swissql> connmgr import -dbp /path/to/project.dbp
 
-# Import with prefix for profile names
-swissql import-dbeaver-project --dbp project.dbp --conn_prefix "prod"
-
-# Dry run to see what would be created
-swissql import-dbeaver-project --dbp project.dbp --dry_run
-
-# Handle conflicts (skip, fail, or overwrite)
-swissql import-dbeaver-project --dbp project.dbp --on_conflict overwrite
+# List all profiles
+swissql> connmgr list
 ```
 
 **Features:**
@@ -73,19 +67,14 @@ swissql import-dbeaver-project --dbp project.dbp --on_conflict overwrite
 - Profile name sanitization and conflict handling
 - Secure credential handling (passwords not imported, prompted on first use)
 - Support for various database types (Oracle, PostgreSQL, MySQL, SQL Server, DB2, Informix, etc.)
+- Pattern-based profile removal with safety checks
+- Database type filtering for bulk operations
 
-### Profile Management
+### Profile Storage
 
 SwissQL supports persistent connection profiles with encrypted credential storage:
 
 ```bash
-# List all profiles
-swissql list profiles
-
-# List profiles with filtering
-swissql list profiles --filter db_type=postgres
-swissql list profiles --filter name=prod --filter save_password=true
-
 # Connect using saved profile
 swissql connect --profile my-oracle-db
 # Or shorthand in REPL:
@@ -152,9 +141,16 @@ cd swissql-backend
 
 # 2) Create secrets (files contain ONLY the raw value, no KEY= prefix)
 mkdir secrets
-Set-Content -NoNewline -Path .\secrets\PORTKEY_API_KEY -Value "<your_portkey_api_key>"
-Set-Content -NoNewline -Path .\secrets\PORTKEY_VIRTUAL_KEY -Value "<your_portkey_virtual_key>"
-Set-Content -NoNewline -Path .\secrets\PORTKEY_MODEL -Value "<your_model>"
+
+# For OpenAI-compatible providers (openai, deepseek, etc.)
+Set-Content -NoNewline -Path .\secrets\SWISSQL_AI_PROVIDER -Value "openai"
+Set-Content -NoNewline -Path .\secrets\OPENAI_API_KEY -Value "<your_openai_api_key>"
+Set-Content -NoNewline -Path .\secrets\OPENAI_MODEL -Value "<your_model>"
+
+# For Portkey (alternative provider)
+# Set-Content -NoNewline -Path .\secrets\PORTKEY_API_KEY -Value "<your_portkey_api_key>"
+# Set-Content -NoNewline -Path .\secrets\PORTKEY_VIRTUAL_KEY -Value "<your_portkey_virtual_key>"
+# Set-Content -NoNewline -Path .\secrets\PORTKEY_MODEL -Value "<your_model>"
 
 # 3) Create docker-compose.yml (see below)
 # 4) Start
@@ -171,17 +167,28 @@ services:
     ports:
       - "8080:8080"
     secrets:
-      - PORTKEY_API_KEY
-      - PORTKEY_VIRTUAL_KEY
-      - PORTKEY_MODEL
+      - SWISSQL_AI_PROVIDER
+      - OPENAI_API_KEY
+      - OPENAI_MODEL
+      # For Portkey (alternative provider), uncomment and use these instead:
+      # - PORTKEY_API_KEY
+      # - PORTKEY_VIRTUAL_KEY
+      # - PORTKEY_MODEL
 
 secrets:
-  PORTKEY_API_KEY:
-    file: ./secrets/PORTKEY_API_KEY
-  PORTKEY_VIRTUAL_KEY:
-    file: ./secrets/PORTKEY_VIRTUAL_KEY
-  PORTKEY_MODEL:
-    file: ./secrets/PORTKEY_MODEL
+  SWISSQL_AI_PROVIDER:
+    file: ./secrets/SWISSQL_AI_PROVIDER
+  OPENAI_API_KEY:
+    file: ./secrets/OPENAI_API_KEY
+  OPENAI_MODEL:
+    file: ./secrets/OPENAI_MODEL
+  # For Portkey (alternative provider), uncomment and use these instead:
+  # PORTKEY_API_KEY:
+  #   file: ./secrets/PORTKEY_API_KEY
+  # PORTKEY_VIRTUAL_KEY:
+  #   file: ./secrets/PORTKEY_VIRTUAL_KEY
+  # PORTKEY_MODEL:
+  #   file: ./secrets/PORTKEY_MODEL
 ```
 
 For additional (optional) settings, see the **AI setup** section below.
@@ -276,8 +283,11 @@ The CLI currently provides an interactive REPL with the following commands:
   - `set display expanded on|off` (expanded display mode)
   - `set display width <n>` (set max column width)
   - `set output table|csv|tsv|json` (set output format)
-  - `import-dbeaver-project` (import DBeaver .dbp project connections)
-  - `list profiles` (list saved connection profiles with filtering)
+  - `connmgr import -dbp` (import DBeaver .dbp project connections)
+  - `connmgr list` (list saved connection profiles with filtering)
+  - `connmgr show` (show profile details)
+  - `connmgr remove` (remove connection profiles)
+  - `connmgr update` (update existing profiles)
 - **psql-compat (\\)**
   - `\conninfo` (show current session and backend information)
   - `\d <name>` (alias: `desc`) (describe a table/view)
@@ -378,7 +388,7 @@ Run:
 
 ### AI setup (optional)
 
-The backend can generate SQL from natural language via an OpenAI-compatible gateway (Portkey by default). If AI is not configured, the endpoint still exists but returns an “AI generation is disabled” response.
+The backend can generate SQL from natural language via an OpenAI-compatible gateway. Supports multiple providers: **Portkey** (default), **OpenAI**, **DeepSeek**, and other OpenAI-compatible providers. If AI is not configured, the endpoint still exists but returns an "AI generation is disabled" response.
 
 Where to store configuration locally:
 
@@ -391,6 +401,44 @@ Enable the `local` Spring profile (PowerShell) before starting the backend:
 ```powershell
 $env:SPRING_PROFILES_ACTIVE="local"
 ```
+
+#### Provider Configuration
+
+Choose your AI provider by setting the `SWISSQL_AI_PROVIDER` environment variable (default: `openai`).
+
+**Option 1: OpenAI-compatible providers (recommended)**
+
+Set `SWISSQL_AI_PROVIDER` to your provider name (e.g., `openai`, `deepseek`).
+
+Required environment variables:
+
+- `{PROVIDER}_API_KEY` (e.g., `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`)
+- `{PROVIDER}_MODEL` (e.g., `OPENAI_MODEL`, `DEEPSEEK_MODEL`)
+
+Optional environment variables:
+
+- `swissql.ai.{provider}.base-url` (e.g., `swissql.ai.openai.base-url`)
+- `swissql.ai.{provider}.timeout-ms` (e.g., `swissql.ai.openai.timeout-ms`)
+
+Example for OpenAI:
+
+```powershell
+$env:SWISSQL_AI_PROVIDER = "openai"
+$env:OPENAI_API_KEY = "sk-..."
+$env:OPENAI_MODEL = "gpt-4"
+```
+
+Example for DeepSeek:
+
+```powershell
+$env:SWISSQL_AI_PROVIDER = "deepseek"
+$env:DEEPSEEK_API_KEY = "sk-..."
+$env:DEEPSEEK_MODEL = "deepseek-chat"
+```
+
+**Option 2: Portkey (alternative provider)**
+
+Set `SWISSQL_AI_PROVIDER` to `portkey`.
 
 Required environment variables:
 
