@@ -215,7 +215,7 @@ func replRegistry() []replCommand {
 				return []replHelpItem{
 					{Group: "CLI", Command: "connmgr import -dbp <file> [--conn_prefix <prefix>] [--on_conflict <strategy>] [--dry_run]", Description: "Import DBeaver project connections"},
 					{Group: "CLI", Command: "connmgr list [--filter key=value ...]", Description: "List connection profiles"},
-					{Group: "CLI", Command: "connmgr remove <name> [--force]", Description: "Remove connection profile"},
+					{Group: "CLI", Command: "connmgr remove <name> [--db_type <name>] [--like] [--force]", Description: "Remove connection profile"},
 					{Group: "CLI", Command: "connmgr show <name>", Description: "Show profile details"},
 					{Group: "CLI", Command: "connmgr update <name> [--new-name <name>] [--dsn <dsn>] [--db-type <type>]", Description: "Update profile properties"},
 					{Group: "CLI", Command: "connmgr clear-credential <name>", Description: "Clear stored credentials for a profile"},

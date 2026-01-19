@@ -343,9 +343,10 @@ func matchConnmgrFilters(name string, p config.Profile, filters map[string][]str
 // runConnmgrRemove handles the connmgr remove command
 func runConnmgrRemove(ctx *replDispatchContext) (bool, bool) {
 	args := ctx.MetaArgs
-	if len(args) < 1 {
+	if len(args) == 0 {
 		fmt.Println("Error: profile name required")
 		fmt.Println("Usage: connmgr remove <profile-name> [--db_type <name>] [--like] [--force]")
+		fmt.Println("       connmgr remove --db_type <name> [--like] [--force]")
 		return true, false
 	}
 
@@ -353,9 +354,18 @@ func runConnmgrRemove(ctx *replDispatchContext) (bool, bool) {
 	dbType := ""
 	useLike := false
 	force := false
-	profileName := args[0]
+	var profileName string
 
-	for i := 1; i < len(args); i++ {
+	// Check if first arg is a flag (starts with --)
+	if strings.HasPrefix(args[0], "--") {
+		// No profile name provided, only flags
+		profileName = ""
+	} else {
+		// First arg is profile name
+		profileName = args[0]
+	}
+
+	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--db_type" && i+1 < len(args) {
 			dbType = args[i+1]
@@ -367,9 +377,11 @@ func runConnmgrRemove(ctx *replDispatchContext) (bool, bool) {
 		}
 	}
 
-	// Validate: if db_type is provided but profile name is empty, that's an error
-	if strings.TrimSpace(profileName) == "" {
-		fmt.Println("Error: profile name cannot be empty")
+	// Validate: profile name is required unless --db_type is provided
+	if strings.TrimSpace(profileName) == "" && dbType == "" {
+		fmt.Println("Error: profile name required (or use --db_type to filter by database type)")
+		fmt.Println("Usage: connmgr remove <profile-name> [--db_type <name>] [--like] [--force]")
+		fmt.Println("       connmgr remove --db_type <name> [--like] [--force]")
 		return true, false
 	}
 
@@ -652,17 +664,21 @@ func runConnmgrUpdate(ctx *replDispatchContext) (bool, bool) {
 			fmt.Println("  - postgres://127.0.0.1:5432/postgres")
 			return true, false
 		}
-		profile.DSN = newDSN
+		p := profiles.Connections[profileName]
+		p.DSN = newDSN
 		// Generate JDBC URL from DSN to keep them in sync
-		profile.URL = config.GenerateJDBCURL(newDSN)
+		p.URL = config.GenerateJDBCURL(newDSN)
+		profiles.Connections[profileName] = p
 		changes = append(changes, "DSN: updated")
 	}
 
 	// Validate and apply --db-type
 	if newDbType != "" {
 		normalizedDbType := config.NormalizeDbType(newDbType)
-		if normalizedDbType != profile.DBType {
-			profile.DBType = normalizedDbType
+		if normalizedDbType != profiles.Connections[profileName].DBType {
+			p := profiles.Connections[profileName]
+			p.DBType = normalizedDbType
+			profiles.Connections[profileName] = p
 			changes = append(changes, fmt.Sprintf("Database Type: %s", normalizedDbType))
 		}
 	}
