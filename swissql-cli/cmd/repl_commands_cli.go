@@ -300,7 +300,7 @@ func handleReplWatch(
 	fmt.Printf("Watching: %s (interval: %v, Ctrl+C or 'q' to stop)\n\n", watchCommand, interval)
 
 	// Execute immediately first
-	fmt.Print("\033[H\033[2J")
+	clearScreen()
 	executeWatchCommand(cmd, line, historyMode, watchCommand, c, sessionId, cfg)
 
 	// Start ticker for subsequent executions
@@ -311,7 +311,7 @@ func handleReplWatch(
 		select {
 		case <-ticker.C:
 			// Clear screen (platform-independent)
-			fmt.Print("\033[H\033[2J")
+			clearScreen()
 
 			// Execute the watched command
 			executeWatchCommand(cmd, line, historyMode, watchCommand, c, sessionId, cfg)
@@ -328,6 +328,10 @@ func handleReplWatch(
 			return true
 		}
 	}
+}
+
+func clearScreen() {
+	fmt.Print("\033[2J\033[H")
 }
 
 // executeWatchCommand executes a command in watch mode.
