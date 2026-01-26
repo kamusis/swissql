@@ -5,20 +5,19 @@ description: Intelligent git commit message workflow that analyzes staged change
 ## Intelligent Git Commit Message Workflow
 
 ### 1. Analyze staged changes
-// turbo
-git status
-git diff --cached --stat
-git diff --cached --name-only
+
+// turbo git status git diff --cached --stat git diff --cached --name-only
 
 ### 2. Analyze change types and scope
-// turbo
-git diff --cached --name-only | head -20
-git diff --cached | head -50
+
+// turbo git diff --cached --name-only | head -20 git diff --cached | head -50
 
 ### 3. Determine commit type and scope
+
 Based on the analysis, determine:
 
 **Commit Types:**
+
 - `feat`: New features, new commands, new endpoints
 - `fix`: Bug fixes, error handling improvements
 - `refactor`: Code restructuring without functional changes
@@ -28,6 +27,7 @@ Based on the analysis, determine:
 - `test`: Test additions or improvements
 
 **Scopes:**
+
 - `cli`: CLI-related changes
 - `backend`: Backend API changes
 - `repl`: REPL interface changes
@@ -38,6 +38,7 @@ Based on the analysis, determine:
 ### 4. Generate structured commit message
 
 **Format:**
+
 ```
 type(scope): concise subject
 
@@ -52,6 +53,7 @@ Minor improvements:
 **Examples:**
 
 **Feature addition:**
+
 ```
 feat(cli): add DBeaver project import command
 
@@ -65,6 +67,7 @@ Minor improvements:
 ```
 
 **Bug fix:**
+
 ```
 fix(repl): resolve connection error message inconsistency
 
@@ -77,6 +80,7 @@ Minor improvements:
 ```
 
 **Documentation:**
+
 ```
 docs(readme): update v0.3.0 feature documentation
 
@@ -92,19 +96,29 @@ Minor improvements:
 ### 5. Commit Message Guidelines
 
 **Subject Line:**
+
 - Use `type(scope): subject` format
 - Keep under 50 characters
 - Use present tense, imperative mood ("add" not "added")
 - Capitalize first letter
 
 **Body:**
+
 - Separate subject from body with blank line
 - Use bullet points for multiple changes
 - Wrap lines at 72 characters
 - Focus on what and why, not how
 - Use present tense ("fix" not "fixed")
 
+**Flexibility Guidelines:**
+
+- For simple changes (bug fixes, small tweaks), body is optional
+- Single-line commits are fine for minor changes: `fix(ci): correct SQL syntax`
+- Only use detailed body when multiple changes or complex modifications
+- Avoid over-structuring simple changes
+
 **What to Include:**
+
 - ✅ Major functional changes
 - ✅ New features or commands
 - ✅ Breaking changes
@@ -112,6 +126,7 @@ Minor improvements:
 - ✅ Important refactoring
 
 **What to Exclude:**
+
 - ❌ File URLs or paths
 - ❌ Implementation details
 - ❌ Minor wording edits
@@ -120,9 +135,11 @@ Minor improvements:
 
 ### 6. Output Format
 
-The workflow must output ONLY the complete commit message without any additional text, explanations, or metadata.
+The workflow must output ONLY the complete commit message without any additional
+text, explanations, or metadata.
 
 **Correct Output:**
+
 ```
 feat(cli): add profile filtering and sorting
 
@@ -135,6 +152,7 @@ Minor improvements:
 ```
 
 **Incorrect Output:**
+
 ```
 Here is the commit message:
 feat(cli): add profile filtering and sorting
@@ -144,11 +162,13 @@ feat(cli): add profile filtering and sorting
 ### 7. Usage Examples
 
 **Automatic mode:**
+
 ```
 /git-commit-message
 ```
 
 **Manual override (specify type):**
+
 ```
 /git-commit-message feat
 /git-commit-message fix
@@ -156,6 +176,7 @@ feat(cli): add profile filtering and sorting
 ```
 
 **Manual override (specify scope):**
+
 ```
 /git-commit-message cli
 /git-commit-message backend
