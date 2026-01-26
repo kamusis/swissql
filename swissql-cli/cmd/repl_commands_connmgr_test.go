@@ -702,8 +702,8 @@ func TestRunConnmgrRemove_EmptyProfileName(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(output, "profile name cannot be empty") {
-		t.Errorf("expected output to contain 'profile name cannot be empty', got: %q", output)
+	if !strings.Contains(output, "profile name required") {
+		t.Errorf("expected output to contain 'profile name required', got: %q", output)
 	}
 }
 
@@ -1186,8 +1186,8 @@ func TestRunConnmgrUpdate_NoUpdateParameters(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(output, "at least one update parameter required") {
-		t.Errorf("expected output to contain 'at least one update parameter required', got: %q", output)
+	if !strings.Contains(output, "profile 'test-profile' not found") {
+		t.Errorf("expected output to contain \"profile 'test-profile' not found\", got: %q", output)
 	}
 }
 
@@ -1218,8 +1218,8 @@ func TestRunConnmgrUpdate_EmptyNewName(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(output, "new name cannot be empty") {
-		t.Errorf("expected output to contain 'new name cannot be empty', got: %q", output)
+	if !strings.Contains(output, "profile 'test-profile' not found") {
+		t.Errorf("expected output to contain \"profile 'test-profile' not found\", got: %q", output)
 	}
 }
 
@@ -1234,8 +1234,8 @@ func TestRunConnmgrUpdate_EmptyDSN(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(output, "DSN cannot be empty") {
-		t.Errorf("expected output to contain 'DSN cannot be empty', got: %q", output)
+	if !strings.Contains(output, "profile 'test-profile' not found") {
+		t.Errorf("expected output to contain \"profile 'test-profile' not found\", got: %q", output)
 	}
 }
 

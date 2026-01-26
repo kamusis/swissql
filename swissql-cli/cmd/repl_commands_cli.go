@@ -334,6 +334,44 @@ func clearScreen() {
 	fmt.Print("\033[2J\033[H")
 }
 
+// shouldAutoPrefixMetaInWatch returns true if the given input looks like a registered REPL meta
+// command that is missing its leading backslash. This is intentionally driven off the REPL
+// registry so new meta commands do not require changes here.
+func shouldAutoPrefixMetaInWatch(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "\\") || strings.HasPrefix(trimmed, "@") {
+		return false
+	}
+	// SQL execution in watch mode is not supported; do not rewrite SQL-like input.
+	if strings.Contains(trimmed, ";") {
+		return false
+	}
+
+	parts := strings.Fields(trimmed)
+	if len(parts) == 0 {
+		return false
+	}
+	first := strings.ToLower(parts[0])
+
+	for _, c := range replRegistry() {
+		for _, n := range c.Names {
+			name := strings.TrimSpace(n)
+			if !strings.HasPrefix(name, "\\") {
+				continue
+			}
+			metaToken := strings.ToLower(strings.TrimPrefix(name, "\\"))
+			if metaToken == first {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // executeWatchCommand executes a command in watch mode.
 func executeWatchCommand(
 	cmd *cobra.Command,
@@ -347,11 +385,8 @@ func executeWatchCommand(
 	normalizedInput := strings.TrimSpace(input)
 
 	// Auto-prefix backslash for meta commands without it (e.g., "top" -> "\top")
-	if normalizedInput != "" && !strings.HasPrefix(normalizedInput, "\\") && !strings.HasPrefix(normalizedInput, "@") {
-		// Check if it looks like a meta command (not SQL)
-		if !strings.Contains(normalizedInput, ";") {
-			normalizedInput = "\\" + normalizedInput
-		}
+	if shouldAutoPrefixMetaInWatch(normalizedInput) {
+		normalizedInput = "\\" + normalizedInput
 	}
 
 	dispatchCtx := &replDispatchContext{
