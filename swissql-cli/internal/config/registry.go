@@ -310,28 +310,17 @@ func (e SessionEntry) GetRemoteHost() string {
 //
 // Resolution order:
 // 1) If name is provided, load from registry.
-// 2) Else if config.current_name is set, load from registry.
-// 3) Else fallback to legacy config.session_id fields.
+// 2) Else return error (no active session).
 func ResolveActiveSession(name string) (SessionEntry, error) {
-	cfg, err := LoadConfig()
-	if err != nil {
-		return SessionEntry{}, err
-	}
-
 	reg, err := LoadRegistry()
 	if err != nil {
 		return SessionEntry{}, err
 	}
 
-	resolvedName := name
-	if resolvedName == "" {
-		resolvedName = cfg.CurrentName
-	}
-
-	if resolvedName != "" {
-		entry, ok := reg.GetSession(resolvedName)
+	if name != "" {
+		entry, ok := reg.GetSession(name)
 		if !ok {
-			return SessionEntry{}, fmt.Errorf("session not found in registry: %s", resolvedName)
+			return SessionEntry{}, fmt.Errorf("session not found in registry: %s", name)
 		}
 		return entry, nil
 	}

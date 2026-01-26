@@ -47,13 +47,15 @@ func TestReplConnect_DisconnectsCurrentSessionAfterConnect(t *testing.T) {
 	c := client.NewClient(srv.URL, 250*time.Millisecond)
 
 	oldSid := "old-session"
+	owns := true
 	ctx := &replDispatchContext{
 		Input:     "connect postgres://postgres:postgres@localhost:5433/postgres",
 		Lower:     "connect postgres://postgres:postgres@localhost:5433/postgres",
 		Client:    c,
 		SessionId: &oldSid,
 		// Keep Name nil to avoid touching registry/config during the disconnect pre-step.
-		Name: nil,
+		Name:        nil,
+		OwnsSession: &owns,
 	}
 
 	handled, _ := dispatchReplLine(ctx)
@@ -77,5 +79,55 @@ func TestReplConnect_DisconnectsCurrentSessionAfterConnect(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".swissql")); err != nil {
 		// It is okay for this directory to not exist, since Name is nil and we avoided config writes.
 		_ = err
+	}
+}
+
+func TestReplConnect_DoesNotDisconnectIfSessionNotOwned(t *testing.T) {
+	calls := make([]string, 0, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/connect" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(client.ConnectResponse{
+				SessionId: "new-session-2",
+				TraceId:   "t2",
+				ExpiresAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := client.NewClient(srv.URL, 250*time.Millisecond)
+	oldSid := "shared-session"
+	owns := false
+	ctx := &replDispatchContext{
+		Input:       "connect postgres://postgres:postgres@localhost:5433/postgres",
+		Lower:       "connect postgres://postgres:postgres@localhost:5433/postgres",
+		Client:      c,
+		SessionId:   &oldSid,
+		Name:        nil,
+		OwnsSession: &owns,
+	}
+
+	handled, _ := dispatchReplLine(ctx)
+	if !handled {
+		t.Fatalf("expected connect to be handled")
+	}
+	if oldSid != "new-session-2" {
+		t.Fatalf("expected session id update")
+	}
+	// Expect only connect call, no disconnect
+	if len(calls) != 1 {
+		t.Fatalf("expected exactly 1 call (connect), got %v", calls)
+	}
+	if calls[0] != "POST /v1/connect" {
+		t.Fatalf("expected call to be connect, got %v", calls)
+	}
+
+	// Verify OwnsSession is updated to true for the new session
+	if !owns {
+		t.Fatalf("expected OwnsSession to be updated to true after successful connect")
 	}
 }

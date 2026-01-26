@@ -121,8 +121,17 @@ var attachCmd = &cobra.Command{
 		if len(args) == 1 {
 			name = args[0]
 		} else if cfg.CurrentName != "" {
-			name = cfg.CurrentName
-		} else {
+			// Validate that the session exists in registry
+			if _, ok := reg.GetSession(cfg.CurrentName); ok {
+				name = cfg.CurrentName
+			} else {
+				// Orphaned config, clear it and fall through to default logic
+				cfg.CurrentName = ""
+				_ = config.SaveConfig(cfg)
+			}
+		}
+
+		if name == "" {
 			mostRecent, ok := reg.MostRecentSessionName()
 			if !ok {
 				return fmt.Errorf("no sessions in registry. Use 'swissql connect --name <name> <dsn>' first")

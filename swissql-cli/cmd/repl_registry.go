@@ -55,6 +55,12 @@ type replDispatchContext struct {
 	WatchMode      bool
 	InvalidateFunc func()
 	CompleterFunc  func(*client.Client, string) liner.Completer
+	// OwnsSession indicates whether this REPL instance owns the session (i.e., created
+	// the connection). When true, the REPL will disconnect the backend session on exit
+	// or when switching to a new connection. When false (e.g., session loaded from shared
+	// config but created by another CLI instance), disconnect is skipped to avoid
+	// interfering with other concurrent CLI sessions.
+	OwnsSession *bool
 }
 
 // replHelpItems returns help rows for all registered commands.
@@ -146,21 +152,24 @@ func replRegistry() []replCommand {
 				}
 
 				if ctx.SessionId != nil && strings.TrimSpace(*ctx.SessionId) != "" {
-					if err := ctx.Client.Disconnect(*ctx.SessionId); err != nil {
-						fmt.Printf("Warning: failed to disconnect current session: %v\n", err)
-					}
-
-					if ctx.Name != nil && strings.TrimSpace(*ctx.Name) != "" {
-						reg, err := config.LoadRegistry()
-						if err == nil {
-							reg.RemoveSession(*ctx.Name)
-							_ = config.SaveRegistry(reg)
+					shouldDisconnect := ctx.OwnsSession != nil && *ctx.OwnsSession
+					if shouldDisconnect {
+						if err := ctx.Client.Disconnect(*ctx.SessionId); err != nil {
+							fmt.Printf("Warning: failed to disconnect current session: %v\n", err)
 						}
 
-						cfg, err := config.LoadConfig()
-						if err == nil && cfg != nil && cfg.CurrentName == *ctx.Name {
-							cfg.CurrentName = ""
-							_ = config.SaveConfig(cfg)
+						if ctx.Name != nil && strings.TrimSpace(*ctx.Name) != "" {
+							reg, err := config.LoadRegistry()
+							if err == nil {
+								reg.RemoveSession(*ctx.Name)
+								_ = config.SaveRegistry(reg)
+							}
+
+							cfg, err := config.LoadConfig()
+							if err == nil && cfg != nil && cfg.CurrentName == *ctx.Name {
+								cfg.CurrentName = ""
+								_ = config.SaveConfig(cfg)
+							}
 						}
 					}
 				}
@@ -176,6 +185,9 @@ func replRegistry() []replCommand {
 				}
 				if ctx.Name != nil {
 					*ctx.Name = newName
+				}
+				if ctx.OwnsSession != nil {
+					*ctx.OwnsSession = true
 				}
 				if ctx.Line != nil && ctx.CompleterFunc != nil {
 					ctx.Line.SetCompleter(ctx.CompleterFunc(ctx.Client, newEntry.SessionId))

@@ -160,10 +160,12 @@ func connectWithClient(c *client.Client, timeout int, useMcp bool, dsn string, d
 }
 
 func finalizeConnect(cmd *cobra.Command, server string, _ int, dbType string, dsn string, name string, sessionId string) error {
-	_, _, err := persistConnectedSession(server, dbType, dsn, name, sessionId)
+	_, finalName, err := persistConnectedSession(server, dbType, dsn, name, sessionId)
 	if err != nil {
 		return err
 	}
+	// Explicitly set the name flag so runRepl can resolve the session without relying on global CurrentName
+	_ = cmd.Flags().Set("name", finalName)
 	return startRepl(cmd)
 }
 

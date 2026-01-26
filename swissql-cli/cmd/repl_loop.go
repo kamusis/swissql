@@ -103,6 +103,11 @@ func runRepl(cmd *cobra.Command, args []string) error {
 
 	var multiLineSql []string
 
+	ownsSession := false
+	if cmd.Name() == "connect" {
+		ownsSession = true
+	}
+
 	for {
 		prompt := "swissql> "
 		if len(multiLineSql) > 0 {
@@ -143,6 +148,7 @@ func runRepl(cmd *cobra.Command, args []string) error {
 			CompleterFunc: func(c *client.Client, sessionId string) liner.Completer {
 				return makeCompleter(c, sessionId)
 			},
+			OwnsSession: &ownsSession,
 		}
 
 		handled, shouldBreak := dispatchReplLine(dispatchCtx)
