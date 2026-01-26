@@ -344,12 +344,22 @@ func executeWatchCommand(
 	sessionId string,
 	cfg *config.Config,
 ) {
+	normalizedInput := strings.TrimSpace(input)
+
+	// Auto-prefix backslash for meta commands without it (e.g., "top" -> "\top")
+	if normalizedInput != "" && !strings.HasPrefix(normalizedInput, "\\") && !strings.HasPrefix(normalizedInput, "@") {
+		// Check if it looks like a meta command (not SQL)
+		if !strings.Contains(normalizedInput, ";") {
+			normalizedInput = "\\" + normalizedInput
+		}
+	}
+
 	dispatchCtx := &replDispatchContext{
 		Cmd:         cmd,
 		Line:        line,
 		HistoryMode: historyMode,
-		Input:       strings.TrimSpace(input),
-		Lower:       strings.ToLower(strings.TrimSpace(input)),
+		Input:       normalizedInput,
+		Lower:       strings.ToLower(normalizedInput),
 		Client:      c,
 		SessionId:   &sessionId,
 		Cfg:         cfg,

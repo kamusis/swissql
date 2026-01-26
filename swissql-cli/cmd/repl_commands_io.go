@@ -38,6 +38,7 @@ func handleReplIOCommands(
 			return true
 		}
 		path := trimTrailingSemicolon(args[0])
+		path = stripQuotesUtil(path)
 		if err := setOutputFile(path); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			return true

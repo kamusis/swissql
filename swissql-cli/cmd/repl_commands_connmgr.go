@@ -12,13 +12,6 @@ import (
 	"github.com/kamusis/swissql/swissql-cli/internal/dbeaver"
 )
 
-var (
-	dbpPath    string
-	connPrefix string
-	onConflict string
-	dryRun     bool
-)
-
 type profileInfo struct {
 	Name         string
 	DBType       string
@@ -56,11 +49,26 @@ func renderImportResult(result *dbeaver.ImportResult, dryRun bool, profilesToCre
 }
 
 // runConnmgrImport handles the connmgr import -dbp command
-func runConnmgrImport(_ *replDispatchContext) (bool, bool) {
+func runConnmgrImport(ctx *replDispatchContext) (bool, bool) {
+	// Parse flags using robust helper
+	flags := parseReplFlags(ctx.MetaArgs)
+	dbpPath := flags["-dbp"]
+	connPrefix := flags["--conn_prefix"]
+	onConflictStr := flags["--on_conflict"]
+	if onConflictStr == "" {
+		onConflictStr = "skip" // default
+	}
+	dryRun := flags["--dry_run"] == "true"
+
+	if dbpPath == "" {
+		fmt.Println("Error: -dbp flag is required for import")
+		return true, false
+	}
+
 	// Validate on_conflict value
-	strategy := config.ConflictStrategy(onConflict)
+	strategy := config.ConflictStrategy(onConflictStr)
 	if strategy != config.ConflictFail && strategy != config.ConflictSkip && strategy != config.ConflictOverwrite {
-		fmt.Printf("Error: invalid on_conflict value: %s (must be fail, skip, or overwrite)\n", onConflict)
+		fmt.Printf("Error: invalid on_conflict value: %s (must be fail, skip, or overwrite)\n", onConflictStr)
 		return true, false
 	}
 
@@ -76,6 +84,13 @@ func runConnmgrImport(_ *replDispatchContext) (bool, bool) {
 		return true, false
 	}
 
+	// Load profiles once
+	profiles, err := config.LoadProfiles()
+	if err != nil {
+		fmt.Printf("Error: failed to load profiles: %v\n", err)
+		return true, false
+	}
+
 	// Convert connections
 	result := &dbeaver.ImportResult{
 		Discovered: len(archive.DataSources.Connections),
@@ -83,6 +98,7 @@ func runConnmgrImport(_ *replDispatchContext) (bool, bool) {
 	}
 
 	var profilesToCreate []profileInfo
+	modified := false
 
 	for connID, conn := range archive.DataSources.Connections {
 		profile, err := dbeaver.ConvertConnection(&conn, connPrefix)
@@ -101,17 +117,6 @@ func runConnmgrImport(_ *replDispatchContext) (bool, bool) {
 		profileName := dbeaver.SanitizeProfileName(conn.Name)
 		if connPrefix != "" {
 			profileName = fmt.Sprintf("%s_%s", connPrefix, profileName)
-		}
-
-		// Add profile (or dry run)
-		// Check if profile already exists (for both dry_run and actual import)
-		profiles, err := config.LoadProfiles()
-		if err != nil {
-			result.Errors = append(result.Errors, dbeaver.ImportError{
-				ConnectionName: conn.Name,
-				Message:        fmt.Sprintf("failed to load profiles: %v", err),
-			})
-			continue
 		}
 
 		_, exists := profiles.Connections[profileName]
@@ -143,15 +148,9 @@ func runConnmgrImport(_ *replDispatchContext) (bool, bool) {
 				Source:       profile.Source,
 			})
 		} else {
-			// Add or overwrite profile
-			_, err = config.AddProfile(profileName, profile, strategy)
-			if err != nil {
-				result.Errors = append(result.Errors, dbeaver.ImportError{
-					ConnectionName: conn.Name,
-					Message:        fmt.Sprintf("failed to save: %v", err),
-				})
-				continue
-			}
+			// Update in-memory map
+			profiles.Connections[profileName] = *profile
+			modified = true
 
 			// Update counters
 			if exists {
@@ -159,6 +158,14 @@ func runConnmgrImport(_ *replDispatchContext) (bool, bool) {
 			} else {
 				result.Created++
 			}
+		}
+	}
+
+	// Save changed profiles once
+	if !dryRun && modified {
+		if err := config.SaveProfiles(profiles); err != nil {
+			fmt.Printf("Error: failed to save connections.json: %v\n", err)
+			return true, false
 		}
 	}
 
@@ -350,32 +357,22 @@ func runConnmgrRemove(ctx *replDispatchContext) (bool, bool) {
 		return true, false
 	}
 
-	// Parse flags
-	dbType := ""
-	useLike := false
-	force := false
 	var profileName string
+	var flagArgs []string
 
-	// Check if first arg is a flag (starts with --)
-	if strings.HasPrefix(args[0], "--") {
-		// No profile name provided, only flags
-		profileName = ""
-	} else {
-		// First arg is profile name
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		profileName = args[0]
+		flagArgs = args[1:]
+	} else {
+		profileName = ""
+		flagArgs = args
 	}
 
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--db_type" && i+1 < len(args) {
-			dbType = args[i+1]
-			i++
-		} else if arg == "--like" {
-			useLike = true
-		} else if arg == "--force" {
-			force = true
-		}
-	}
+	// Parse flags using robust helper
+	flags := parseReplFlags(flagArgs)
+	dbType := flags["--db_type"]
+	useLike := flags["--like"] == "true"
+	force := flags["--force"] == "true"
 
 	// Validate: profile name is required unless --db_type is provided
 	if strings.TrimSpace(profileName) == "" && dbType == "" {
@@ -507,6 +504,25 @@ func runConnmgrRemove(ctx *replDispatchContext) (bool, bool) {
 	return true, false
 }
 
+// findProfileByName is a helper that looks up a profile by name and returns it along with the profiles registry and any error.
+func findProfileByName(profileName string) (*config.Profile, *config.Profiles, error) {
+	if strings.TrimSpace(profileName) == "" {
+		return nil, nil, fmt.Errorf("profile name cannot be empty")
+	}
+
+	profiles, err := config.LoadProfiles()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load profiles: %w", err)
+	}
+
+	profile, exists := profiles.Connections[profileName]
+	if !exists {
+		return nil, nil, fmt.Errorf("profile '%s' not found", profileName)
+	}
+
+	return &profile, profiles, nil
+}
+
 // runConnmgrShow handles the connmgr show command
 func runConnmgrShow(ctx *replDispatchContext) (bool, bool) {
 	args := ctx.MetaArgs
@@ -516,28 +532,14 @@ func runConnmgrShow(ctx *replDispatchContext) (bool, bool) {
 		return true, false
 	}
 
-	profileName := args[0]
-	if strings.TrimSpace(profileName) == "" {
-		fmt.Println("Error: profile name cannot be empty")
-		return true, false
-	}
-
-	// Load profiles
-	profiles, err := config.LoadProfiles()
+	profile, _, err := findProfileByName(args[0])
 	if err != nil {
-		fmt.Printf("Error: failed to load profiles: %v\n", err)
-		return true, false
-	}
-
-	// Check if profile exists
-	profile, exists := profiles.Connections[profileName]
-	if !exists {
-		fmt.Printf("Error: profile '%s' not found\n", profileName)
+		fmt.Printf("Error: %v\n", err)
 		return true, false
 	}
 
 	// Display profile information
-	fmt.Printf("Profile: %s\n", profileName)
+	fmt.Printf("Profile: %s\n", args[0])
 	fmt.Printf("Database Type: %s\n", profile.DBType)
 	fmt.Printf("DSN: %s\n", config.MaskDsn(profile.DSN))
 	fmt.Printf("JDBC URL: %s\n", profile.URL)
@@ -561,6 +563,41 @@ func runConnmgrShow(ctx *replDispatchContext) (bool, bool) {
 	return true, false
 }
 
+// parseReplFlags parses multiple --flag=value or --flag value tokens from MetaArgs.
+// Boolean flags (--force, --like, --dry_run) are always set to "true" and don't consume the next argument.
+// Surrounding quotes are stripped from flag values.
+func parseReplFlags(args []string) map[string]string {
+	// Known boolean flags that should not consume subsequent arguments
+	booleanFlags := map[string]bool{
+		"--force":   true,
+		"--like":    true,
+		"--dry_run": true,
+	}
+
+	flags := make(map[string]string)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !strings.HasPrefix(arg, "-") {
+			continue
+		}
+
+		if strings.Contains(arg, "=") {
+			parts := strings.SplitN(arg, "=", 2)
+			flags[parts[0]] = stripQuotesUtil(parts[1])
+		} else if booleanFlags[arg] {
+			// Boolean flag: always set to "true", never consume next arg
+			flags[arg] = "true"
+		} else if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			flags[arg] = stripQuotesUtil(args[i+1])
+			i++
+		} else {
+			// Flag without value and not in booleanFlags list - treat as boolean
+			flags[arg] = "true"
+		}
+	}
+	return flags
+}
+
 // runConnmgrUpdate handles the connmgr update command
 func runConnmgrUpdate(ctx *replDispatchContext) (bool, bool) {
 	args := ctx.MetaArgs
@@ -570,57 +607,23 @@ func runConnmgrUpdate(ctx *replDispatchContext) (bool, bool) {
 		return true, false
 	}
 
-	profileName := args[0]
-	if strings.TrimSpace(profileName) == "" {
-		fmt.Println("Error: profile name cannot be empty")
+	originalName := args[0]
+	profile, profiles, err := findProfileByName(originalName)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
 		return true, false
 	}
+	profileName := originalName
 
-	// Parse flags
-	var newName, newDSN, newDbType string
-	for i := 1; i < len(args); i++ {
-		switch args[i] {
-		case "--new-name":
-			if i+1 >= len(args) {
-				fmt.Println("Error: --new-name requires a value")
-				return true, false
-			}
-			newName = args[i+1]
-			i++
-		case "--dsn":
-			if i+1 >= len(args) {
-				fmt.Println("Error: --dsn requires a value")
-				return true, false
-			}
-			newDSN = args[i+1]
-			i++
-		case "--db-type":
-			if i+1 >= len(args) {
-				fmt.Println("Error: --db-type requires a value")
-				return true, false
-			}
-			newDbType = args[i+1]
-			i++
-		}
-	}
+	// Parse flags using robust helper
+	flags := parseReplFlags(args[1:])
+	newName := flags["--new-name"]
+	newDSN := flags["--dsn"]
+	newDbType := flags["--db-type"]
 
 	// Validate at least one update parameter is provided
 	if newName == "" && newDSN == "" && newDbType == "" {
 		fmt.Println("Error: at least one update parameter required (--new-name, --dsn, or --db-type)")
-		return true, false
-	}
-
-	// Load profiles
-	profiles, err := config.LoadProfiles()
-	if err != nil {
-		fmt.Printf("Error: failed to load profiles: %v\n", err)
-		return true, false
-	}
-
-	// Check if profile exists
-	profile, exists := profiles.Connections[profileName]
-	if !exists {
-		fmt.Printf("Error: profile '%s' not found\n", profileName)
 		return true, false
 	}
 
@@ -642,7 +645,7 @@ func runConnmgrUpdate(ctx *replDispatchContext) (bool, bool) {
 			}
 			// Remove old entry and add new one
 			delete(profiles.Connections, profileName)
-			profiles.Connections[sanitizedName] = profile
+			profiles.Connections[sanitizedName] = *profile
 			profileName = sanitizedName
 			changes = append(changes, fmt.Sprintf("Name: %s", sanitizedName))
 		}
@@ -707,25 +710,12 @@ func runConnmgrClearCredential(ctx *replDispatchContext) (bool, bool) {
 		return true, false
 	}
 
-	profileName := args[0]
-	if strings.TrimSpace(profileName) == "" {
-		fmt.Println("Error: profile name cannot be empty")
-		return true, false
-	}
-
-	// Load profiles
-	profiles, err := config.LoadProfiles()
+	profile, _, err := findProfileByName(args[0])
 	if err != nil {
-		fmt.Printf("Error: failed to load profiles: %v\n", err)
+		fmt.Printf("Error: %v\n", err)
 		return true, false
 	}
-
-	// Check if profile exists
-	profile, exists := profiles.Connections[profileName]
-	if !exists {
-		fmt.Printf("Error: profile '%s' not found\n", profileName)
-		return true, false
-	}
+	profileName := args[0]
 
 	// Load credentials
 	credentials, err := config.LoadCredentials()

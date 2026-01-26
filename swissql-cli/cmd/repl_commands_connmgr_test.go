@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -32,14 +31,34 @@ func captureOutput(fn func()) string {
 	return buf.String()
 }
 
+// setupTestConfigDir redirects config directory to a temp directory for test isolation.
+// This prevents tests from writing to the real ~/.swissql directory.
+// Returns a cleanup function that should be deferred.
+func setupTestConfigDir(t *testing.T) func() {
+	t.Helper()
+
+	tmp := t.TempDir()
+
+	// Save original env vars
+	origUserProfile := os.Getenv("USERPROFILE")
+	origHome := os.Getenv("HOME")
+
+	// Redirect to temp directory
+	_ = os.Setenv("USERPROFILE", tmp)
+	_ = os.Setenv("HOME", tmp)
+
+	// Return cleanup function
+	return func() {
+		_ = os.Setenv("USERPROFILE", origUserProfile)
+		_ = os.Setenv("HOME", origHome)
+	}
+}
+
 // TestRunConnmgrImport_InvalidConflictStrategy tests validation of on_conflict parameter
 func TestRunConnmgrImport_InvalidConflictStrategy(t *testing.T) {
-	// Set global variables
-	onConflict = "invalid"
-
 	output := captureOutput(func() {
 		handled, _ := runConnmgrImport(&replDispatchContext{
-			Input: "connmgr import -dbp test.dbp --on_conflict invalid",
+			MetaArgs: []string{"-dbp", "test.dbp", "--on_conflict", "invalid"},
 		})
 		if !handled {
 			t.Error("expected handled to be true")
@@ -49,51 +68,29 @@ func TestRunConnmgrImport_InvalidConflictStrategy(t *testing.T) {
 	if !strings.Contains(output, "invalid on_conflict value") {
 		t.Errorf("expected output to contain 'invalid on_conflict value', got: %q", output)
 	}
-
-	// Reset global variable
-	onConflict = ""
 }
 
 // TestRunConnmgrImport_MissingDBPFlag tests missing required -dbp flag
 func TestRunConnmgrImport_MissingDBPFlag(t *testing.T) {
-	// Set global variables - set a valid on_conflict to avoid that validation
-	dbpPath = ""
-	onConflict = "fail"
-
 	output := captureOutput(func() {
 		handled, _ := runConnmgrImport(&replDispatchContext{
-			Input: "connmgr import --on_conflict fail",
+			MetaArgs: []string{"--on_conflict", "fail"},
 		})
 		if !handled {
 			t.Error("expected handled to be true")
 		}
 	})
 
-	if !strings.Contains(output, "required flag") && !strings.Contains(output, "dbp") {
-		t.Errorf("expected output to contain 'required flag' or 'dbp', got: %q", output)
+	if !strings.Contains(output, "required") && !strings.Contains(output, "dbp") {
+		t.Errorf("expected output to contain 'required' or 'dbp', got: %q", output)
 	}
-
-	// Reset global variable
-	onConflict = ""
 }
 
 // TestRunConnmgrImport_ValidFlags tests that valid flags are accepted
 func TestRunConnmgrImport_ValidFlags(t *testing.T) {
-	// Set global variables
-	dbpPath = "test.dbp"
-	onConflict = "fail"
-	connPrefix = ""
-	dryRun = false
-	defer func() {
-		dbpPath = ""
-		onConflict = ""
-		connPrefix = ""
-		dryRun = false
-	}()
-
 	output := captureOutput(func() {
 		handled, _ := runConnmgrImport(&replDispatchContext{
-			Input: "connmgr import -dbp test.dbp --on_conflict fail",
+			MetaArgs: []string{"-dbp", "test.dbp", "--on_conflict", "fail"},
 		})
 		if !handled {
 			t.Error("expected handled to be true")
@@ -112,17 +109,9 @@ func TestRunConnmgrImport_AllConflictStrategies(t *testing.T) {
 
 	for _, strategy := range strategies {
 		t.Run(strategy, func(t *testing.T) {
-			// Set global variables
-			dbpPath = "test.dbp"
-			onConflict = strategy
-			defer func() {
-				dbpPath = ""
-				onConflict = ""
-			}()
-
 			output := captureOutput(func() {
 				handled, _ := runConnmgrImport(&replDispatchContext{
-					Input: fmt.Sprintf("connmgr import -dbp test.dbp --on_conflict %s", strategy),
+					MetaArgs: []string{"-dbp", "test.dbp", "--on_conflict", strategy},
 				})
 				if !handled {
 					t.Error("expected handled to be true")
@@ -139,19 +128,9 @@ func TestRunConnmgrImport_AllConflictStrategies(t *testing.T) {
 
 // TestRunConnmgrImport_DryRunMode tests dry run mode
 func TestRunConnmgrImport_DryRunMode(t *testing.T) {
-	// Set global variables
-	dbpPath = "test.dbp"
-	onConflict = "fail"
-	dryRun = true
-	defer func() {
-		dbpPath = ""
-		onConflict = ""
-		dryRun = false
-	}()
-
 	output := captureOutput(func() {
 		handled, _ := runConnmgrImport(&replDispatchContext{
-			Input: "connmgr import -dbp test.dbp --dry_run",
+			MetaArgs: []string{"-dbp", "test.dbp", "--on_conflict", "fail", "--dry_run"},
 		})
 		if !handled {
 			t.Error("expected handled to be true")
@@ -263,46 +242,6 @@ func TestRunConnmgrList_ValidFilters(t *testing.T) {
 			// Should not have error
 			if strings.Contains(output, "error") || strings.Contains(output, "Error") {
 				t.Errorf("unexpected error in output: %q", output)
-			}
-		})
-	}
-}
-
-// TestRunConnmgrPlaceholderCommands tests placeholder commands
-func TestRunConnmgrPlaceholderCommands(t *testing.T) {
-	tests := []struct {
-		name     string
-		fn       func(*replDispatchContext) (bool, bool)
-		expected string
-	}{
-		{
-			name:     "remove placeholder",
-			fn:       runConnmgrRemove,
-			expected: "not yet implemented",
-		},
-		{
-			name:     "show placeholder",
-			fn:       runConnmgrShow,
-			expected: "not yet implemented",
-		},
-		{
-			name:     "update placeholder",
-			fn:       runConnmgrUpdate,
-			expected: "not yet implemented",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			output := captureOutput(func() {
-				handled, _ := tt.fn(&replDispatchContext{})
-				if !handled {
-					t.Error("expected handled to be true")
-				}
-			})
-
-			if !strings.Contains(output, tt.expected) {
-				t.Errorf("expected output to contain %q, got: %q", tt.expected, output)
 			}
 		})
 	}
@@ -523,51 +462,169 @@ func TestConfigPackageFunctions(t *testing.T) {
 	}
 }
 
-// TestGlobalVariableReset tests that global variables don't cause state pollution
-func TestGlobalVariableReset(t *testing.T) {
-	// First call with specific values
-	dbpPath = "test1.dbp"
-	onConflict = "fail"
-	connPrefix = "prefix1"
-	dryRun = false
-
-	output1 := captureOutput(func() {
-		handled, _ := runConnmgrImport(&replDispatchContext{
-			Input: "connmgr import -dbp test1.dbp --on_conflict fail",
-		})
-		if !handled {
-			t.Error("expected handled to be true")
-		}
-	})
-
-	// Second call with different values
-	dbpPath = "test2.dbp"
-	onConflict = "skip"
-	connPrefix = "prefix2"
-	dryRun = true
-
-	output2 := captureOutput(func() {
-		handled, _ := runConnmgrImport(&replDispatchContext{
-			Input: "connmgr import -dbp test2.dbp --on_conflict skip --dry_run",
-		})
-		if !handled {
-			t.Error("expected handled to be true")
-		}
-	})
-
-	// Both should fail on file not found, not on state pollution
-	if strings.Contains(output1, "invalid on_conflict value") {
-		t.Error("first call should not fail with invalid on_conflict")
+// TestParseReplFlags tests the robust flag parsing helper
+func TestParseReplFlags(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		expected map[string]string
+	}{
+		{
+			name: "mix of formats",
+			args: []string{"-dbp", "test.dbp", "--on_conflict=overwrite", "--dry_run"},
+			expected: map[string]string{
+				"-dbp":          "test.dbp",
+				"--on_conflict": "overwrite",
+				"--dry_run":     "true",
+			},
+		},
+		{
+			name: "only equal format",
+			args: []string{"--db_type=oracle", "--force=true"},
+			expected: map[string]string{
+				"--db_type": "oracle",
+				"--force":   "true",
+			},
+		},
+		{
+			name: "only space format",
+			args: []string{"--db_type", "postgres", "--force"},
+			expected: map[string]string{
+				"--db_type": "postgres",
+				"--force":   "true",
+			},
+		},
+		{
+			name: "duplicate flags - last wins",
+			args: []string{"--db_type", "oracle", "--db_type", "postgres"},
+			expected: map[string]string{
+				"--db_type": "postgres",
+			},
+		},
+		{
+			name: "flag followed by another flag",
+			args: []string{"--dsn", "--force"},
+			expected: map[string]string{
+				"--dsn":   "true",
+				"--force": "true",
+			},
+		},
+		{
+			name:     "empty args",
+			args:     []string{},
+			expected: map[string]string{},
+		},
+		{
+			name: "boolean flag does not consume next argument",
+			args: []string{"profile-name", "--force", "extra-arg"},
+			expected: map[string]string{
+				"--force": "true",
+			},
+		},
+		{
+			name: "double quoted path is unquoted",
+			args: []string{"-dbp", `"C:\Users\test\file.dbp"`},
+			expected: map[string]string{
+				"-dbp": `C:\Users\test\file.dbp`,
+			},
+		},
+		{
+			name: "single quoted path is unquoted",
+			args: []string{"-dbp", `'C:\Users\test\file.dbp'`},
+			expected: map[string]string{
+				"-dbp": `C:\Users\test\file.dbp`,
+			},
+		},
+		{
+			name: "quoted value in equals format",
+			args: []string{`--path="C:\Users\test\file.dbp"`},
+			expected: map[string]string{
+				"--path": `C:\Users\test\file.dbp`,
+			},
+		},
 	}
-	if strings.Contains(output2, "invalid on_conflict value") {
-		t.Error("second call should not fail with invalid on_conflict")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseReplFlags(tt.args)
+			if len(got) != len(tt.expected) {
+				t.Errorf("expected %d flags, got %d", len(tt.expected), len(got))
+			}
+			for k, v := range tt.expected {
+				if got[k] != v {
+					t.Errorf("expected flag %s=%s, got %s", k, v, got[k])
+				}
+			}
+		})
+	}
+}
+
+// TestFindProfileByName tests the findProfileByName helper function
+func TestFindProfileByName(t *testing.T) {
+	// Setup test isolation - redirect config to temp directory
+	cleanup := setupTestConfigDir(t)
+	defer cleanup()
+
+	// Setup: create a test profile
+	testProfiles := &config.Profiles{
+		Version: 1,
+		Connections: map[string]config.Profile{
+			"test-profile": {
+				ID:     "id1",
+				DBType: "oracle",
+				DSN:    "oracle://localhost:1521/orcl",
+			},
+		},
+	}
+	if err := config.SaveProfiles(testProfiles); err != nil {
+		t.Fatalf("failed to save test profiles: %v", err)
 	}
 
-	// Reset global variables
-	dbpPath = ""
-	onConflict = ""
-	connPrefix = ""
-	dryRun = false
+	tests := []struct {
+		name        string
+		profileName string
+		wantErr     bool
+		errMsg      string
+	}{
+		{
+			name:        "existing profile",
+			profileName: "test-profile",
+			wantErr:     false,
+		},
+		{
+			name:        "empty name",
+			profileName: "   ",
+			wantErr:     true,
+			errMsg:      "cannot be empty",
+		},
+		{
+			name:        "non-existent profile",
+			profileName: "non-existent",
+			wantErr:     true,
+			errMsg:      "not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			profile, profiles, err := findProfileByName(tt.profileName)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("findProfileByName() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && !strings.Contains(err.Error(), tt.errMsg) {
+				t.Errorf("expected error to contain %q, got: %q", tt.errMsg, err.Error())
+			}
+			if !tt.wantErr {
+				if profile == nil {
+					t.Error("expected profile to be non-nil")
+				}
+				if profiles == nil {
+					t.Error("expected profiles to be non-nil")
+				}
+			}
+		})
+	}
 }
 
 // TestRenderImportResult tests the renderImportResult function
@@ -668,6 +725,10 @@ func TestRunConnmgrRemove_NonExistentProfile(t *testing.T) {
 
 // TestRunConnmgrRemove_WithDbType tests remove command with --db_type filter
 func TestRunConnmgrRemove_WithDbType(t *testing.T) {
+	// Setup test isolation
+	cleanup := setupTestConfigDir(t)
+	defer cleanup()
+
 	// Setup: create test profiles
 	testProfiles := &config.Profiles{
 		Version: 1,
@@ -697,11 +758,6 @@ func TestRunConnmgrRemove_WithDbType(t *testing.T) {
 	if err := config.SaveProfiles(testProfiles); err != nil {
 		t.Fatalf("failed to save test profiles: %v", err)
 	}
-	defer func() {
-		// Cleanup: remove test profiles
-		config.SaveProfiles(&config.Profiles{Version: 1, Connections: make(map[string]config.Profile)})
-	}()
-
 	// Test: remove all oracle profiles with --force
 	output := captureOutput(func() {
 		handled, _ := runConnmgrRemove(&replDispatchContext{
@@ -728,6 +784,10 @@ func TestRunConnmgrRemove_WithDbType(t *testing.T) {
 
 // TestRunConnmgrRemove_WithLike tests remove command with --like flag for fuzzy matching
 func TestRunConnmgrRemove_WithLike(t *testing.T) {
+	// Setup test isolation
+	cleanup := setupTestConfigDir(t)
+	defer cleanup()
+
 	// Setup: create test profiles
 	testProfiles := &config.Profiles{
 		Version: 1,
@@ -757,11 +817,6 @@ func TestRunConnmgrRemove_WithLike(t *testing.T) {
 	if err := config.SaveProfiles(testProfiles); err != nil {
 		t.Fatalf("failed to save test profiles: %v", err)
 	}
-	defer func() {
-		// Cleanup: remove test profiles
-		config.SaveProfiles(&config.Profiles{Version: 1, Connections: make(map[string]config.Profile)})
-	}()
-
 	// Test: remove all profiles matching "prod" with --force
 	output := captureOutput(func() {
 		handled, _ := runConnmgrRemove(&replDispatchContext{
@@ -788,6 +843,10 @@ func TestRunConnmgrRemove_WithLike(t *testing.T) {
 
 // TestRunConnmgrRemove_WithDbTypeAndLike tests remove command with both --db_type and --like flags
 func TestRunConnmgrRemove_WithDbTypeAndLike(t *testing.T) {
+	// Setup test isolation
+	cleanup := setupTestConfigDir(t)
+	defer cleanup()
+
 	// Setup: create test profiles
 	testProfiles := &config.Profiles{
 		Version: 1,
@@ -817,11 +876,6 @@ func TestRunConnmgrRemove_WithDbTypeAndLike(t *testing.T) {
 	if err := config.SaveProfiles(testProfiles); err != nil {
 		t.Fatalf("failed to save test profiles: %v", err)
 	}
-	defer func() {
-		// Cleanup: remove test profiles
-		config.SaveProfiles(&config.Profiles{Version: 1, Connections: make(map[string]config.Profile)})
-	}()
-
 	// Test: remove oracle profiles matching "prod" with --force
 	output := captureOutput(func() {
 		handled, _ := runConnmgrRemove(&replDispatchContext{
@@ -851,6 +905,10 @@ func TestRunConnmgrRemove_WithDbTypeAndLike(t *testing.T) {
 
 // TestRunConnmgrRemove_MultipleMatchesWithoutForce tests remove command with multiple matches without --force
 func TestRunConnmgrRemove_MultipleMatchesWithoutForce(t *testing.T) {
+	// Setup test isolation
+	cleanup := setupTestConfigDir(t)
+	defer cleanup()
+
 	// Setup: create test profiles
 	testProfiles := &config.Profiles{
 		Version: 1,
@@ -874,11 +932,6 @@ func TestRunConnmgrRemove_MultipleMatchesWithoutForce(t *testing.T) {
 	if err := config.SaveProfiles(testProfiles); err != nil {
 		t.Fatalf("failed to save test profiles: %v", err)
 	}
-	defer func() {
-		// Cleanup: remove test profiles
-		config.SaveProfiles(&config.Profiles{Version: 1, Connections: make(map[string]config.Profile)})
-	}()
-
 	// Test: remove profiles matching "prod" with --force (to test listing behavior)
 	output := captureOutput(func() {
 		handled, _ := runConnmgrRemove(&replDispatchContext{
@@ -902,6 +955,10 @@ func TestRunConnmgrRemove_MultipleMatchesWithoutForce(t *testing.T) {
 
 // TestRunConnmgrRemove_CaseInsensitive tests remove command with case-insensitive matching
 func TestRunConnmgrRemove_CaseInsensitive(t *testing.T) {
+	// Setup test isolation
+	cleanup := setupTestConfigDir(t)
+	defer cleanup()
+
 	// Setup: create test profiles
 	testProfiles := &config.Profiles{
 		Version: 1,
@@ -919,11 +976,6 @@ func TestRunConnmgrRemove_CaseInsensitive(t *testing.T) {
 	if err := config.SaveProfiles(testProfiles); err != nil {
 		t.Fatalf("failed to save test profiles: %v", err)
 	}
-	defer func() {
-		// Cleanup: remove test profiles
-		config.SaveProfiles(&config.Profiles{Version: 1, Connections: make(map[string]config.Profile)})
-	}()
-
 	// Test: remove profile with different case
 	output := captureOutput(func() {
 		handled, _ := runConnmgrRemove(&replDispatchContext{
@@ -990,6 +1042,120 @@ func TestRunConnmgrShow_NonExistentProfile(t *testing.T) {
 
 	if !strings.Contains(output, "profile 'non-existent-profile' not found") {
 		t.Errorf("expected output to contain 'profile not found', got: %q", output)
+	}
+}
+
+// TestRunConnmgrShow_ContentVerification tests show command output content
+func TestRunConnmgrShow_ContentVerification(t *testing.T) {
+	// Setup test isolation
+	cleanup := setupTestConfigDir(t)
+	defer cleanup()
+
+	// Setup: create a test profile with source information
+	testProfiles := &config.Profiles{
+		Version: 1,
+		Connections: map[string]config.Profile{
+			"test-show-profile": {
+				ID:           "id1",
+				DBType:       "oracle",
+				DSN:          "oracle://user:pass@localhost:1521/orcl",
+				URL:          "jdbc:oracle:thin:@localhost:1521/orcl",
+				SavePassword: true,
+				Source: config.Source{
+					Kind:         "dbeaver",
+					Provider:     "oracle",
+					Driver:       "oracle_thin",
+					ConnectionID: "conn-123",
+				},
+			},
+		},
+	}
+	if err := config.SaveProfiles(testProfiles); err != nil {
+		t.Fatalf("failed to save test profiles: %v", err)
+	}
+
+	output := captureOutput(func() {
+		handled, _ := runConnmgrShow(&replDispatchContext{
+			MetaArgs: []string{"test-show-profile"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	// Verify output contains expected profile information
+	expectedSubstrings := []string{
+		"Profile: test-show-profile",
+		"Database Type: oracle",
+		"DSN:", // DSN should be masked
+		"JDBC URL:",
+		"Save Password: true",
+		"Source:",
+		"Kind: dbeaver",
+		"Provider: oracle",
+		"Driver: oracle_thin",
+		"Connection ID: conn-123",
+	}
+
+	for _, substr := range expectedSubstrings {
+		if !strings.Contains(output, substr) {
+			t.Errorf("expected output to contain %q, got: %q", substr, output)
+		}
+	}
+}
+
+// TestRunConnmgrImport_OnConflictSkip tests import with skip conflict strategy on existing profiles
+func TestRunConnmgrImport_OnConflictSkip(t *testing.T) {
+	// This test verifies that when on_conflict=skip is used and a profile already exists,
+	// the import skips that profile without error
+	// Note: Full integration testing requires a valid DBP file which is complex to mock
+	// This test verifies the validation logic works correctly
+	output := captureOutput(func() {
+		handled, _ := runConnmgrImport(&replDispatchContext{
+			MetaArgs: []string{"-dbp", "nonexistent.dbp", "--on_conflict", "skip"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	// Should fail with file not found, not with invalid strategy
+	if strings.Contains(output, "invalid on_conflict value") {
+		t.Errorf("skip strategy should be valid, got: %q", output)
+	}
+}
+
+// TestRunConnmgrImport_OnConflictOverwrite tests import with overwrite conflict strategy
+func TestRunConnmgrImport_OnConflictOverwrite(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrImport(&replDispatchContext{
+			MetaArgs: []string{"-dbp", "nonexistent.dbp", "--on_conflict", "overwrite"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	// Should fail with file not found, not with invalid strategy
+	if strings.Contains(output, "invalid on_conflict value") {
+		t.Errorf("overwrite strategy should be valid, got: %q", output)
+	}
+}
+
+// TestRunConnmgrImport_ConnPrefix tests import with connection prefix
+func TestRunConnmgrImport_ConnPrefix(t *testing.T) {
+	output := captureOutput(func() {
+		handled, _ := runConnmgrImport(&replDispatchContext{
+			MetaArgs: []string{"-dbp", "nonexistent.dbp", "--conn_prefix", "test"},
+		})
+		if !handled {
+			t.Error("expected handled to be true")
+		}
+	})
+
+	// Should fail with file not found, not with invalid prefix
+	if strings.Contains(output, "invalid") && strings.Contains(output, "prefix") {
+		t.Errorf("conn_prefix should be valid, got: %q", output)
 	}
 }
 

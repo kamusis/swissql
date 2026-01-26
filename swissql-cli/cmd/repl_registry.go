@@ -232,65 +232,11 @@ func replRegistry() []replCommand {
 					return true, false
 				}
 
-				subcommand := fields[1]
+				subcommand := strings.ToLower(fields[1])
 				ctx.MetaArgs = fields[2:]
 
-				switch strings.ToLower(subcommand) {
+				switch subcommand {
 				case "import":
-					// Reset global variables to default values to avoid state pollution
-					dbpPath = ""
-					connPrefix = ""
-					onConflict = "skip"
-					dryRun = false
-
-					// Parse flags and validate
-					validFlags := map[string]bool{
-						"-dbp":          true,
-						"--conn_prefix": true,
-						"--on_conflict": true,
-						"--dry_run":     true,
-					}
-
-					for i := 2; i < len(fields); i++ {
-						flag := fields[i]
-						if !validFlags[flag] {
-							fmt.Printf("Error: unknown flag '%s'\n", flag)
-							fmt.Println("Available flags: -dbp, --conn_prefix, --on_conflict, --dry_run")
-							return true, false
-						}
-
-						switch flag {
-						case "-dbp":
-							if i+1 >= len(fields) {
-								fmt.Println("Error: -dbp requires a value")
-								return true, false
-							}
-							dbpPath = fields[i+1]
-							i++
-						case "--conn_prefix":
-							if i+1 >= len(fields) {
-								fmt.Println("Error: --conn_prefix requires a value")
-								return true, false
-							}
-							connPrefix = fields[i+1]
-							i++
-						case "--on_conflict":
-							if i+1 >= len(fields) {
-								fmt.Println("Error: --on_conflict requires a value")
-								return true, false
-							}
-							onConflict = fields[i+1]
-							i++
-						case "--dry_run":
-							dryRun = true
-						}
-					}
-
-					if dbpPath == "" {
-						fmt.Println("Error: -dbp flag is required for import")
-						return true, false
-					}
-
 					return runConnmgrImport(ctx)
 				case "list":
 					return runConnmgrList(ctx)
