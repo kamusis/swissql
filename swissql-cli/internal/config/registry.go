@@ -166,6 +166,99 @@ func MaskDsn(raw string) string {
 	return "masked://" + suffix
 }
 
+// GenerateJDBCURL generates a JDBC URL from a SwissQL DSN format.
+// This is the reverse of JDBCToSwissQLDSN in the dbeaver package.
+// Examples:
+//   - postgresql://host:port/database → jdbc:postgresql://host:port/database
+//   - oracle://host:port/service → jdbc:oracle:thin:@host:port:service
+//   - oracle://alias?TNS_ADMIN=path → jdbc:oracle:thin:@alias?TNS_ADMIN=path
+func GenerateJDBCURL(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+
+	// Find protocol (first ://)
+	protocolIdx := strings.Index(dsn, "://")
+	if protocolIdx == -1 {
+		return ""
+	}
+
+	protocol := dsn[:protocolIdx]
+	rest := dsn[protocolIdx+3:] // Skip "://"
+
+	normalizedDbType := NormalizeDbType(protocol)
+
+	// Handle different database types
+	switch normalizedDbType {
+	case "oracle":
+		// oracle://host:port/service → jdbc:oracle:thin:@host:port:service
+		// oracle://alias?TNS_ADMIN=path → jdbc:oracle:thin:@alias?TNS_ADMIN=path
+		return "jdbc:oracle:thin:@" + rest
+	case "postgres":
+		// postgresql://host:port/database → jdbc:postgresql://host:port/database
+		return "jdbc:postgresql://" + rest
+	default:
+		// For other databases, use generic format: jdbc:protocol://rest
+		return "jdbc:" + protocol + "://" + rest
+	}
+}
+
+// ValidateDSN validates that a DSN string follows the SwissQL DSN format.
+// Returns an error if the DSN is invalid, or nil if valid.
+//
+// SwissQL DSN format: protocol://host[:port][/path][?query]
+//
+// Examples of valid DSNs:
+//   - oracle://host:1521/service
+//   - oracle://alias?TNS_ADMIN=/path/to/wallet
+//   - postgresql://localhost:5432/database
+//   - postgres://127.0.0.1:5432/postgres
+//
+// Examples of invalid DSNs:
+//   - invalid-dsn (missing ://)
+//   - oracle:// (missing host)
+//   - ://host (missing protocol)
+func ValidateDSN(dsn string) error {
+	if dsn == "" {
+		return fmt.Errorf("DSN cannot be empty")
+	}
+
+	// Find protocol (first ://)
+	protocolIdx := strings.Index(dsn, "://")
+	if protocolIdx == -1 {
+		return fmt.Errorf("invalid DSN format: missing '://' separator")
+	}
+
+	if protocolIdx == 0 {
+		return fmt.Errorf("invalid DSN format: missing protocol")
+	}
+
+	protocol := dsn[:protocolIdx]
+	rest := dsn[protocolIdx+3:] // Skip "://"
+
+	if rest == "" {
+		return fmt.Errorf("invalid DSN format: missing host")
+	}
+
+	// Validate protocol is not empty and contains only valid characters
+	protocol = strings.TrimSpace(protocol)
+	if protocol == "" {
+		return fmt.Errorf("invalid DSN format: protocol cannot be empty")
+	}
+
+	// Check if rest starts with a valid host (not with special characters)
+	// Host should start with alphanumeric or [ for IPv6 addresses
+	firstChar := rest[0]
+	if !((firstChar >= 'a' && firstChar <= 'z') ||
+		(firstChar >= 'A' && firstChar <= 'Z') ||
+		(firstChar >= '0' && firstChar <= '9') ||
+		firstChar == '[') {
+		return fmt.Errorf("invalid DSN format: host must start with alphanumeric character or '[' for IPv6")
+	}
+
+	return nil
+}
+
 // GetRemoteHost returns the remote hostname or TNS alias from the DSN.
 func (e SessionEntry) GetRemoteHost() string {
 	if e.DsnMasked == "" {

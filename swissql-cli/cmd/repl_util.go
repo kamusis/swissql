@@ -11,15 +11,26 @@ func readFileContent(baseDir string, path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", fmt.Errorf("file path is required")
 	}
-	p := path
-	if baseDir != "" && !filepath.IsAbs(path) {
-		p = filepath.Join(baseDir, path)
+	// Strip surrounding quotes from path
+	p := stripQuotesUtil(path)
+	if baseDir != "" && !filepath.IsAbs(p) {
+		p = filepath.Join(baseDir, p)
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// stripQuotesUtil removes surrounding single or double quotes from a string.
+func stripQuotesUtil(s string) string {
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }
 
 func trimTrailingSemicolon(s string) string {

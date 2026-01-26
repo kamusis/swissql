@@ -300,7 +300,7 @@ func handleReplWatch(
 	fmt.Printf("Watching: %s (interval: %v, Ctrl+C or 'q' to stop)\n\n", watchCommand, interval)
 
 	// Execute immediately first
-	fmt.Print("\033[H\033[2J")
+	clearScreen()
 	executeWatchCommand(cmd, line, historyMode, watchCommand, c, sessionId, cfg)
 
 	// Start ticker for subsequent executions
@@ -311,7 +311,7 @@ func handleReplWatch(
 		select {
 		case <-ticker.C:
 			// Clear screen (platform-independent)
-			fmt.Print("\033[H\033[2J")
+			clearScreen()
 
 			// Execute the watched command
 			executeWatchCommand(cmd, line, historyMode, watchCommand, c, sessionId, cfg)
@@ -330,6 +330,10 @@ func handleReplWatch(
 	}
 }
 
+func clearScreen() {
+	fmt.Print("\033[2J\033[H")
+}
+
 // executeWatchCommand executes a command in watch mode.
 func executeWatchCommand(
 	cmd *cobra.Command,
@@ -340,12 +344,22 @@ func executeWatchCommand(
 	sessionId string,
 	cfg *config.Config,
 ) {
+	normalizedInput := strings.TrimSpace(input)
+
+	// Auto-prefix backslash for meta commands without it (e.g., "top" -> "\top")
+	if normalizedInput != "" && !strings.HasPrefix(normalizedInput, "\\") && !strings.HasPrefix(normalizedInput, "@") {
+		// Check if it looks like a meta command (not SQL)
+		if !strings.Contains(normalizedInput, ";") {
+			normalizedInput = "\\" + normalizedInput
+		}
+	}
+
 	dispatchCtx := &replDispatchContext{
 		Cmd:         cmd,
 		Line:        line,
 		HistoryMode: historyMode,
-		Input:       strings.TrimSpace(input),
-		Lower:       strings.ToLower(strings.TrimSpace(input)),
+		Input:       normalizedInput,
+		Lower:       strings.ToLower(normalizedInput),
 		Client:      c,
 		SessionId:   &sessionId,
 		Cfg:         cfg,

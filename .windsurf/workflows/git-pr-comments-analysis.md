@@ -5,40 +5,45 @@ description: Workflow to analyze PR comments and provide structured recommendati
 ## PR Comments Analysis Workflow
 
 ### 1. Check out the PR branch
-// turbo
-gh pr checkout [id]
+
+// turbo gh pr checkout [id]
 
 ### 2. Get comments on PR
-// turbo
-gh api --paginate repos/[owner]/[repo]/pulls/[id]/comments | jq '.[] | {user: .user.login, body, path, line, original_line, created_at, in_reply_to_id, pull_request_review_id, commit_id}'
+
+// turbo gh api --paginate repos/[owner]/[repo]/pulls/[id]/comments | jq '.[] |
+{user: .user.login, body, path, line, original_line, created_at, in_reply_to_id,
+pull_request_review_id, commit_id}'
 
 ### 3. Analyze each comment systematically
 
 For EACH comment, perform the following analysis:
 
 **a. Extract comment information:**
+
 ```
 (index). From [user] on [file]:[lines] — [comment body]
 ```
 
 **b. Analyze code context:**
+
 - Read the target file and surrounding code
 - Understand the current implementation
 - Identify the scope of suggested changes
 
 **c. Feasibility assessment:**
+
 - **High Feasibility**: Simple, clear, low-risk changes
   - Code style/formatting fixes
   - Variable renaming
   - Adding missing error handling
   - Simple logic improvements
-  
+
 - **Medium Feasibility**: Moderate complexity changes
   - Refactoring small functions
   - Adding new utility methods
   - Improving error messages
   - Performance optimizations
-  
+
 - **Low Feasibility**: Complex or high-risk changes
   - Architectural changes
   - Complex business logic
@@ -46,6 +51,7 @@ For EACH comment, perform the following analysis:
   - Requires extensive testing
 
 **d. Generate recommendation:**
+
 ```
 Recommendation: [APPLY/REVIEW/IGNORE]
 Reasoning: [Detailed explanation]
@@ -55,11 +61,13 @@ Priority: [HIGH/MEDIUM/LOW]
 ```
 
 ### 4. Continue analysis for all comments
+
 Process each comment sequentially without making any code changes.
 
 ### 5. Generate comprehensive summary
 
 **Summary Report:**
+
 ```
 ## PR Comments Analysis Summary
 
@@ -108,11 +116,13 @@ Process each comment sequentially without making any code changes.
 ### 6. Usage Examples
 
 **Basic analysis:**
+
 ```
 /address-pr-comments 123
 ```
 
 **Specific owner/repo:**
+
 ```
 /address-pr-comments owner/repo/456
 ```
@@ -120,6 +130,7 @@ Process each comment sequentially without making any code changes.
 ### 7. Analysis Criteria
 
 **Feasibility Factors:**
+
 - **Clarity**: How clear is the comment's intent?
 - **Risk**: What's the risk of introducing bugs?
 - **Scope**: How much code needs to be changed?
@@ -127,6 +138,7 @@ Process each comment sequentially without making any code changes.
 - **Dependencies**: Will it affect other components?
 
 **Priority Factors:**
+
 - **Impact**: How much does it improve the code?
 - **Urgency**: Is it blocking the PR merge?
 - **Standards**: Does it violate coding standards?
@@ -136,11 +148,13 @@ Process each comment sequentially without making any code changes.
 ### 8. Safety Guidelines
 
 **Never Auto-Apply:**
+
 - This workflow only analyzes and recommends
 - All code changes require manual approval
 - Complex changes always require discussion
 
 **Quality Assurance:**
+
 - Verify understanding before recommending
 - Consider edge cases and implications
 - Assess testing requirements
@@ -149,6 +163,7 @@ Process each comment sequentially without making any code changes.
 ### 9. Integration with Development Workflow
 
 **Pre-merge Checklist:**
+
 - [ ] Review HIGH priority recommendations
 - [ ] Apply agreed-upon changes
 - [ ] Test modified functionality
@@ -156,6 +171,7 @@ Process each comment sequentially without making any code changes.
 - [ ] Respond to reviewer comments
 
 **Post-merge Follow-up:**
+
 - [ ] Address MEDIUM priority items in future PRs
 - [ ] Consider LOW priority items for tech debt
 - [ ] Document any architectural decisions
@@ -169,3 +185,6 @@ Process each comment sequentially without making any code changes.
 - Provides structured, actionable feedback
 - Helps prioritize review comments efficiently
 - Reduces cognitive load in PR review process
+- **Cleanup**: If any temporary files (e.g., `.json` files) are created during
+  the analysis process, ensure they are deleted before finishing the workflow to
+  keep the codebase clean.

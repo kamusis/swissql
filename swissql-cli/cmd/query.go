@@ -442,7 +442,7 @@ func renderTabularTable(cmd *cobra.Command, w io.Writer, resp *client.ExecuteRes
 		plainFlag, _ = cmd.Flags().GetBool("plain")
 	}
 	if forcePlain || plainFlag {
-		table.Options(tablewriter.WithSymbols(&tw.SymbolASCII{}))
+		table.Options(tablewriter.WithSymbols(tw.NewSymbols(tw.StyleASCII)))
 	}
 
 	headers := make([]any, len(resp.Data.Columns))

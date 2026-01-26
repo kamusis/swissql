@@ -257,7 +257,7 @@ func renderDynamicTableWriter(w io.Writer, columns []string, rows []client.Order
 	// On Windows terminals, Unicode box-drawing can render poorly.
 	// Only force ASCII when writing to an interactive stdout (not when redirected).
 	if runtime.GOOS == "windows" && shouldPageOutput(w) {
-		table.Options(tablewriter.WithSymbols(&tw.SymbolASCII{}))
+		table.Options(tablewriter.WithSymbols(tw.NewSymbols(tw.StyleASCII)))
 	}
 
 	headers := make([]any, 0, len(columns))

@@ -187,6 +187,16 @@ func replRegistry() []replCommand {
 				return true, false
 			},
 		},
+		// TODO: Implement disconnect command to explicitly disconnect from current database connection
+		// and return to empty REPL state without exiting the REPL.
+		// This should:
+		// 1. Call backend disconnect API for current session
+		// 2. Clear session_id, entry, name, and current_db_type from context
+		// 3. Remove session from registry
+		// 4. Update config to clear current_name
+		// 5. Reset completer to default
+		// 6. Invalidate cache
+		// 7. Display success message
 		{
 			Names: []string{"list drivers", "list driver"},
 			Group: "CLI",
@@ -199,14 +209,50 @@ func replRegistry() []replCommand {
 			},
 		},
 		{
-			Names: []string{"list profiles", "list profile"},
+			Names: []string{"connmgr"},
 			Group: "CLI",
-			Help:  replHelpItem{Group: "CLI", Command: "list profiles [--filter key=value ...]", Description: "List connection profiles from ~/.swissql/connections.json"},
+			HelpItems: func() []replHelpItem {
+				return []replHelpItem{
+					{Group: "CLI", Command: "connmgr import -dbp <file> [--conn_prefix <prefix>] [--on_conflict <strategy>] [--dry_run]", Description: "Import DBeaver project connections"},
+					{Group: "CLI", Command: "connmgr list [--filter key=value ...]", Description: "List connection profiles"},
+					{Group: "CLI", Command: "connmgr remove <name> [--db_type <name>] [--like] [--force]", Description: "Remove connection profile"},
+					{Group: "CLI", Command: "connmgr show <name>", Description: "Show profile details"},
+					{Group: "CLI", Command: "connmgr update <name> [--new-name <name>] [--dsn <dsn>] [--db-type <type>]", Description: "Update profile properties"},
+					{Group: "CLI", Command: "connmgr clear-credential <name>", Description: "Clear stored credentials for a profile"},
+				}
+			},
 			Match: func(input string, lower string) bool {
-				return strings.HasPrefix(lower, "list profiles") || strings.HasPrefix(lower, "list profile")
+				return strings.HasPrefix(lower, "connmgr ")
 			},
 			Run: func(ctx *replDispatchContext) (bool, bool) {
-				return handleReplProfileCommands(ctx.Cmd, ctx.Line, ctx.HistoryMode, ctx.Input), false
+				// Parse connmgr subcommand
+				fields := strings.Fields(strings.TrimSpace(ctx.Input))
+				if len(fields) < 2 {
+					fmt.Println("Error: connmgr requires a subcommand (import, list, remove, show, update, clear-credential)")
+					return true, false
+				}
+
+				subcommand := strings.ToLower(fields[1])
+				ctx.MetaArgs = fields[2:]
+
+				switch subcommand {
+				case "import":
+					return runConnmgrImport(ctx)
+				case "list":
+					return runConnmgrList(ctx)
+				case "remove":
+					return runConnmgrRemove(ctx)
+				case "show":
+					return runConnmgrShow(ctx)
+				case "update":
+					return runConnmgrUpdate(ctx)
+				case "clear-credential":
+					return runConnmgrClearCredential(ctx)
+				default:
+					fmt.Printf("Error: unknown connmgr subcommand '%s'\n", subcommand)
+					fmt.Println("Available subcommands: import, list, remove, show, update, clear-credential")
+					return true, false
+				}
 			},
 		},
 		{
