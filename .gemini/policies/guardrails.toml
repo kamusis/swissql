@@ -1,0 +1,39 @@
+# 1) Require confirmation for dangerous commands (high priority)
+[[rule]]
+toolName = ["run_shell_command", "ShellTool"]
+commandPrefix = [
+  # Destructive file operations
+  "rm ", "rmdir ", "dd ", "mkfs ",
+  
+  # Git mutating or destructive operations
+  "git commit", "git push", "git rebase", "git reset", "git clean", "git rm", "git remote remove",
+  
+  # Permission and privileged commands
+  "chmod ", "chown ", "sudo ", "su ",
+  
+  # System state commands
+  "shutdown", "reboot", "systemctl ", "service ",
+  
+  # Package management (global or system-level)
+  "brew install", "brew uninstall", 
+  "npm install -g", "npm uninstall -g", 
+  "yarn global", "pip install -g", "pip uninstall -g"
+]
+decision = "ask_user"
+priority = 200
+
+# 2) Fallback: Automatically approve all other shell commands (low priority)
+[[rule]]
+toolName = "run_shell_command"
+decision = "allow"
+priority = 50
+
+# 3) Allow common built-in tools (file operations, network, memory)
+[[rule]]
+toolName = [
+  "write_file", "replace", "edit", 
+  "read_file", "read_many_files", "ls", "grep", "glob", 
+  "web_fetch", "web_search", "memory"
+]
+decision = "allow"
+priority = 50
